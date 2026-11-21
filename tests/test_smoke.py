@@ -179,5 +179,59 @@ class EndpointTests(unittest.TestCase):
         self.assertFalse(tracker.update(np.zeros(16000, dtype=np.float32)))
 
 
+class AdvancedDataTests(unittest.TestCase):
+    def _state(self):
+        state = RaceState()
+        packets = [
+            simulator._session_packet(0, 0),
+            simulator._participants(0, 0),
+            simulator._lap_packet(0, 0, 3, 0.5),
+            simulator._status_packet(0, 0, 70, 12, 17, 2, 4, 3),
+        ]
+        for data in packets:
+            pid, packet, header = p.parse_packet(data)
+            state.apply(pid, packet, header)
+        return state
+
+    def test_pace_summary(self):
+        state = self._state()
+        state.player.session_laps = [
+            {"lap": 1, "time_s": 82.4, "s1_s": 27.1, "s2_s": 28.2, "s3_s": 27.1, "valid": True},
+            {"lap": 2, "time_s": 82.1, "s1_s": 26.9, "s2_s": 28.0, "s3_s": 27.2, "valid": True},
+            {"lap": 3, "time_s": 82.3, "s1_s": 27.0, "s2_s": 28.1, "s3_s": 27.2, "valid": True},
+        ]
+        pace = state.pace_summary()
+        self.assertAlmostEqual(pace["best_lap_s"], 82.1)
+        self.assertAlmostEqual(pace["delta_to_best_s"], 0.2)
+        self.assertAlmostEqual(pace["sector_deltas_s"]["s1"], 0.1)
+        self.assertAlmostEqual(pace["rolling_pace_3_s"], 82.2667, places=3)
+        self.assertIn("best_sectors_s", pace)
+
+    def test_pit_projection(self):
+        state = self._state()
+        projection = state.pit_projection(pit_loss_s=21.0)
+        self.assertGreaterEqual(projection["projected_rejoin_position"], 1)
+        self.assertEqual(projection["pit_loss_s"], 21.0)
+        self.assertIn("undercut_margin_s", projection)
+
+    def test_car_systems(self):
+        state = self._state()
+        systems = state.systems()
+        self.assertIn("ers_pct", systems)
+        self.assertEqual(systems["fuel_mix"], "standard")
+        self.assertIn("engine_temp_c", systems)
+
+    def test_tools_use_new_data(self):
+        state = self._state()
+        state.player.session_laps = [
+            {"lap": 1, "time_s": 82.4, "s1_s": 27.1, "s2_s": 28.2, "s3_s": 27.1, "valid": True},
+            {"lap": 2, "time_s": 82.1, "s1_s": 26.9, "s2_s": 28.0, "s3_s": 27.2, "valid": True},
+        ]
+        self.assertIn("Best lap", tools.pace_report(state))
+        self.assertIn("ERS", tools.systems_report(state))
+        self.assertIn("Pit loss", tools.strategy_report(state))
+        self.assertIn("Best lap", tools.quick_answer("how is my pace?", state))
+
+
 if __name__ == "__main__":
     unittest.main()

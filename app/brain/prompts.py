@@ -65,6 +65,24 @@ def _compact_block(snapshot: dict[str, Any]) -> str:
         f"track temp {snapshot.get('track_temp_c')} C, air {snapshot.get('air_temp_c')} C",
         f"penalties {snapshot.get('penalties_s')} s, pit stops {snapshot.get('pit_stops')}",
     ]
+    pace = snapshot.get("pace") or {}
+    if pace:
+        lines.append(
+            f"pace best {pace['best_lap_s']} s, last {pace['last_lap_s']} s "
+            f"({pace['delta_to_best_s']:+.3f}), rolling {pace['rolling_pace_3_s']} s"
+        )
+    systems = snapshot.get("systems") or {}
+    if systems:
+        lines.append(
+            f"ERS {systems['ers_pct']:.0f} percent {systems['ers_mode']}, "
+            f"fuel mix {systems['fuel_mix']}, engine {systems['engine_temp_c']} C"
+        )
+    strategy = snapshot.get("strategy") or {}
+    if strategy:
+        lines.append(
+            f"pit projection: rejoin P{strategy['projected_rejoin_position']}, "
+            f"exit traffic {', '.join(strategy['traffic_on_exit']) or 'clear'}"
+        )
     grid = snapshot.get("grid") or []
     position = snapshot.get("position") or 0
     nearby = [row for row in grid if abs(row["pos"] - position) <= 2 and row["pos"] != position]
@@ -156,6 +174,39 @@ def _engineer_notes(snapshot: dict[str, Any]) -> list[str]:
                 f"Car {where}: {row['driver']} on {row['tyre']} tyres, "
                 f"{row['tyre_age']} laps old, {row['stops']} stops."
             )
+
+    pace = snapshot.get("pace") or {}
+    if pace:
+        trend = pace.get("pace_trend_s")
+        trend_text = ""
+        if trend is not None:
+            trend_text = " improving" if trend < -0.05 else " degrading" if trend > 0.05 else " stable"
+        notes.append(
+            f"Pace: best {pace['best_lap_s']} seconds, last lap "
+            f"{pace['last_lap_s']} ({pace['delta_to_best_s']:+.3f}),{trend_text}."
+        )
+
+    systems = snapshot.get("systems") or {}
+    ers = systems.get("ers_pct")
+    if ers is not None and ers < 25:
+        notes.append(f"ERS is low at {ers:.0f} percent. Recommendation: deploy mode none or medium.")
+    engine_temp = systems.get("engine_temp_c") or 0
+    if engine_temp >= 115:
+        notes.append(f"Engine temperature {engine_temp} celsius, lift and coast to cool it.")
+    brakes = systems.get("brake_temps_c") or {}
+    if brakes and max(brakes.values()) >= 700:
+        notes.append(
+            f"Brakes overheating at {max(brakes.values())} celsius. Lift and coast into the stops."
+        )
+
+    strategy = snapshot.get("strategy") or {}
+    if strategy:
+        traffic = strategy.get("traffic_on_exit") or []
+        notes.append(
+            f"Pit projection: rejoin around P{strategy['projected_rejoin_position']}"
+            + (f", traffic with {', '.join(traffic)}" if traffic else ", clear air on exit")
+            + "."
+        )
     forecast = snapshot.get("rain_forecast") or []
     if forecast and snapshot.get("weather") in ("clear", "light cloud", "overcast"):
         notes.append("Weather: " + "; ".join(forecast[:2]) + ".")

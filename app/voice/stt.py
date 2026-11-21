@@ -35,21 +35,35 @@ class Transcriber:
                 "faster-whisper is not installed. Run: pip install faster-whisper"
             ) from exc
 
-        log.info("loading whisper %s on %s (%s)", self.model_name, self.device, self.compute_type)
-        try:
-            self._model = WhisperModel(
-                self.model_name, device=self.device, compute_type=self.compute_type
-            )
-        except Exception as exc:  # noqa: BLE001 - CUDA usually fails on missing cuDNN
-            if self.device == "cpu":
-                raise
-            log.warning("whisper on %s failed (%s); falling back to CPU", self.device, exc)
-            self.device = "cpu"
-            self.compute_type = "int8"
-            self._model = WhisperModel(
-                self.model_name, device="cpu", compute_type="int8"
-            )
-        return self._model
+        attempts = [(self.device, self.compute_type, False)]
+        if self.device != "cpu":
+            attempts.append(("cpu", "int8", False))
+        # A transient Hugging Face hiccup must not break speech recognition
+        # when the model is already cached locally.
+        attempts.append((attempts[-1][0], attempts[-1][1], True))
+
+        last_error: Exception | None = None
+        for device, compute_type, local_only in attempts:
+            try:
+                log.info(
+                    "loading whisper %s on %s (%s%s)",
+                    self.model_name, device, compute_type,
+                    ", cache only" if local_only else "",
+                )
+                model = WhisperModel(
+                    self.model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    local_files_only=local_only,
+                )
+                self.device = device
+                self.compute_type = compute_type
+                self._model = model
+                return model
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                log.warning("whisper load failed on %s/%s: %s", device, compute_type, exc)
+        raise RuntimeError(f"could not load whisper model: {last_error}")
 
     def warm_up(self) -> None:
         self._load()

@@ -87,6 +87,19 @@ DEFAULTS: dict[str, Any] = {
         "cooldown_s": 25,
         "speak_status_every_s": 0,
     },
+    "strategy": {
+        "pit_loss_s": 21.0,
+        "traffic_window_s": 2.0,
+    },
+    "overlay": {
+        "enabled": True,
+        "state_file": ".temp/live_state.json",
+        "x": 40,
+        "y": 40,
+        "scale": 1.0,
+        "opacity": 0.88,
+        "toggle_key": "f10",
+    },
 }
 
 

@@ -29,6 +29,9 @@ class ProactiveEngine:
         self._gap_warned_lap = -99
         self._damage_warned = False
         self._pit_stops: dict[int, int] = {}
+        self._best_sectors: tuple = (None, None, None)
+        self._ers_warned_lap = -99
+        self._temps_warned = 0.0
         self._rules: list[tuple[str, Callable[[], str | None], float]] = [
             ("lap", self._lap_call, 10.0),
             ("wear", self._wear_call, 60.0),
@@ -41,6 +44,9 @@ class ProactiveEngine:
             ("gap_behind", self._gap_behind_call, 60.0),
             ("rival_pit", self._rival_pit_call, 10.0),
             ("undercut", self._undercut_call, 90.0),
+            ("sector_pb", self._sector_pb_call, 15.0),
+            ("ers", self._ers_call, 30.0),
+            ("temps", self._temps_call, 60.0),
             ("damage", self._damage_call, 120.0),
             ("invalid_lap", self._invalid_lap_call, 10.0),
         ]
@@ -237,6 +243,44 @@ class ProactiveEngine:
         if s.floor_damage >= 30:
             self._damage_warned = True
             return "Floor damage. Watch the rear through high speed corners."
+        return None
+
+    def _sector_pb_call(self) -> str | None:
+        me = self.state.player
+        laps = [lap for lap in me.session_laps if lap.get("valid")]
+        if len(laps) < 2:
+            return None
+        best = tuple(
+            min(lap[s] for lap in laps) for s in ("s1_s", "s2_s", "s3_s")
+        )
+        previous, self._best_sectors = self._best_sectors, best
+        if any(value is None for value in previous):
+            return None
+        improved = [
+            str(i + 1)
+            for i, (new, old) in enumerate(zip(best, previous))
+            if new < old - 0.005
+        ]
+        if not improved:
+            return None
+        return f"Personal best in sector {' and '.join(improved)}."
+
+    def _ers_call(self) -> str | None:
+        s = self.state
+        ers = 100.0 * s.ers_joules / 4_000_000.0
+        if ers >= 20 or s.lap - self._ers_warned_lap < 5:
+            return None
+        self._ers_warned_lap = s.lap
+        return f"ERS is down to {ers:.0f} percent. Save deployment on the straights."
+
+    def _temps_call(self) -> str | None:
+        s = self.state
+        brakes = s.brake_temps_c
+        hottest = max(brakes) if brakes else 0
+        if s.engine_temp_c >= 115:
+            return f"Engine temperature {s.engine_temp_c} celsius. Lift and coast."
+        if hottest >= 700:
+            return f"Brakes at {hottest} celsius. Lift and coast into the stops."
         return None
 
     def _invalid_lap_call(self) -> str | None:

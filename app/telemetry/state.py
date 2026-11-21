@@ -48,6 +48,8 @@ ACTUAL_COMPOUNDS = {
 }
 
 FIA_FLAGS = {-1: "unknown", 0: "none", 1: "green", 2: "blue", 3: "yellow", 4: "red"}
+ERS_MODES = {0: "none", 1: "medium", 2: "hotlap", 3: "overtake"}
+FUEL_MIXES = {0: "lean", 1: "standard", 2: "rich", 3: "max"}
 SAFETY_CAR = {0: "none", 1: "safety car", 2: "virtual safety car", 3: "formation lap"}
 PIT_STATUS = {0: "on track", 1: "in pit lane", 2: "in pit box"}
 RESULT_STATUS = {
@@ -137,7 +139,15 @@ class CarState:
     fia_flag: int = 0
     ers_joules: float = 0.0
     ers_mode: int = 0
+    ers_harvested_mguk_j: float = 0.0
+    ers_harvested_mguh_j: float = 0.0
+    ers_deployed_j: float = 0.0
+    brake_bias: int = 0
+    engine_temp_c: int = 0
     drs_allowed: int = 0
+    drs_activation_distance_m: int = 0
+    wear_samples: list = field(default_factory=list)
+    last_wear_lap: int = 0
     # damage
     tyre_wear: tuple = (0.0, 0.0, 0.0, 0.0)
     tyre_damage: tuple = (0, 0, 0, 0)
@@ -171,8 +181,28 @@ class CarState:
     def compound_c_index(self) -> str | None:
         return ACTUAL_COMPOUNDS.get(self.compound_code, (None, None))[1]
 
+    @property
+    def wear_rate_per_lap(self) -> float | None:
+        if len(self.wear_samples) < 2:
+            return None
+        (lap_a, wear_a), (lap_b, wear_b) = self.wear_samples[-2], self.wear_samples[-1]
+        laps = lap_b - lap_a
+        if laps <= 0 or wear_b <= wear_a:
+            return None
+        return (wear_b - wear_a) / laps
+
+    @property
+    def predicted_tyre_life(self) -> float | None:
+        rate = self.wear_rate_per_lap
+        if not rate:
+            return None
+        worst = max(self.tyre_wear) if self.tyre_wear else 0.0
+        return max(0.0, (100.0 - worst - 15.0) / rate)
+
     def to_dict(self) -> dict[str, Any]:
         gap = self.delta_leader_ms / 1000.0 if self.delta_leader_ms else 0.0
+        life = self.predicted_tyre_life
+        wear = max(self.tyre_wear) if self.tyre_wear else 0.0
         return {
             "pos": self.position,
             "driver": self.name,
@@ -180,6 +210,10 @@ class CarState:
             "lap": self.lap,
             "tyre": self.compound_name,
             "tyre_age": self.tyre_age_laps,
+            "wear_pct": round(wear, 1),
+            "tyre_life": round(life, 1) if life is not None else None,
+            "predicted_pit_lap": self.lap + round(life) if life is not None else None,
+            "last_lap_s": round(self.last_lap_ms / 1000.0, 3) if self.last_lap_ms else None,
             "stops": self.pit_stops,
             "status": PIT_STATUS.get(self.pit_status, "on track"),
             "result": RESULT_STATUS.get(self.result_status, "unknown"),
@@ -222,9 +256,12 @@ class RaceState:
     final_classification: list = field(default_factory=list)
     lobby: list = field(default_factory=list)
     motion: dict = field(default_factory=dict)
+    pit_loss_s: float = 21.0
+    traffic_window_s: float = 2.0
     # internals
     lap_start_fuel: float | None = None
     lap_start_wear: float = 0.0
+    _gap_history: deque = field(default_factory=lambda: deque(maxlen=600), repr=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     # ------------------------------------------------------------------
@@ -345,6 +382,7 @@ class RaceState:
                     behind = car.delta_ahead_ms / 1000.0
                 break
         self.gap_behind_s = behind
+        self._gap_history.append((time.time(), self.gap_ahead_s))
 
     def _record_player_lap(self, car: CarState, me) -> None:
         lap_ms = int(me.last_lap_time_in_ms)
@@ -392,6 +430,7 @@ class RaceState:
             car.tyre_surface_c = tuple(int(x) for x in t.tyres_surface_temperature)
             car.tyre_inner_c = tuple(int(x) for x in t.tyres_inner_temperature)
             car.tyre_pressure_psi = tuple(round(float(x), 1) for x in t.tyres_pressure)
+            car.engine_temp_c = int(t.engine_temperature)
 
     def _apply_status(self, packet) -> None:
         for i, s in enumerate(packet.car_status_data):
@@ -406,7 +445,12 @@ class RaceState:
             car.fia_flag = int(s.vehicle_fia_flags)
             car.ers_joules = float(s.ers_store_energy)
             car.ers_mode = int(s.ers_deploy_mode)
+            car.ers_harvested_mguk_j = float(s.ers_harvested_this_lap_mguk)
+            car.ers_harvested_mguh_j = float(s.ers_harvested_this_lap_mguh)
+            car.ers_deployed_j = float(s.ers_deployed_this_lap)
+            car.brake_bias = int(s.front_brake_bias)
             car.drs_allowed = int(s.drs_allowed)
+            car.drs_activation_distance_m = int(s.drs_activation_distance)
         me = self.player
         if self.lap_start_fuel is None or self.lap_start_fuel <= 0:
             self.lap_start_fuel = me.fuel_kg
@@ -435,6 +479,11 @@ class RaceState:
             }
             car.engine_blown = int(d.engine_blown)
             car.engine_seized = int(d.engine_seized)
+            if car.lap and car.lap != car.last_wear_lap:
+                car.wear_samples.append((car.lap, max(car.tyre_wear) if car.tyre_wear else 0.0))
+                while len(car.wear_samples) > 10:
+                    car.wear_samples.pop(0)
+                car.last_wear_lap = car.lap
 
     def _apply_participants(self, packet) -> None:
         n = min(int(packet.num_active_cars), p.MAX_CARS)
@@ -854,6 +903,114 @@ class RaceState:
         rows = [car.to_dict() for car in self.cars if car.position > 0]
         return sorted(rows, key=lambda row: row["pos"])
 
+    def gap_trend_s(self, window_s: float = 5.0) -> float | None:
+        """Positive = the gap ahead is opening, negative = closing."""
+        if self.gap_ahead_s is None or not self._gap_history:
+            return None
+        cutoff = time.time() - window_s
+        old = None
+        for ts, gap in self._gap_history:
+            if ts >= cutoff and gap is not None:
+                old = gap
+                break
+        if old is None:
+            return None
+        return round(self.gap_ahead_s - old, 2)
+
+    def pace_summary(self) -> dict[str, Any]:
+        laps = [lap for lap in self.player.session_laps if lap.get("valid")]
+        if not laps:
+            return {}
+        best_lap = min(lap["time_s"] for lap in laps)
+        last = laps[-1]
+        best_sectors = {
+            "s1": min(lap["s1_s"] for lap in laps),
+            "s2": min(lap["s2_s"] for lap in laps),
+            "s3": min(lap["s3_s"] for lap in laps),
+        }
+        sectors_last = {"s1": last["s1_s"], "s2": last["s2_s"], "s3": last["s3_s"]}
+        sector_deltas = {
+            key: round(sectors_last[key] - best_sectors[key], 3) for key in best_sectors
+        }
+        recent = laps[-3:]
+        rolling = sum(lap["time_s"] for lap in recent) / len(recent)
+        trend = None
+        if len(recent) >= 2:
+            trend = round(recent[-1]["time_s"] - recent[0]["time_s"], 3)
+        return {
+            "best_lap_s": round(best_lap, 3),
+            "last_lap_s": round(last["time_s"], 3),
+            "delta_to_best_s": round(last["time_s"] - best_lap, 3),
+            "best_sectors_s": {k: round(v, 3) for k, v in best_sectors.items()},
+            "last_sectors_s": {k: round(v, 3) for k, v in sectors_last.items()},
+            "sector_deltas_s": sector_deltas,
+            "rolling_pace_3_s": round(rolling, 3),
+            "pace_trend_s": trend,
+            "valid_laps": len(laps),
+        }
+
+    def pit_projection(
+        self, pit_loss_s: float | None = None, traffic_window_s: float | None = None
+    ) -> dict[str, Any]:
+        me = self.player
+        if not me.position:
+            return {}
+        loss = self.pit_loss_s if pit_loss_s is None else pit_loss_s
+        window = self.traffic_window_s if traffic_window_s is None else traffic_window_s
+        base = me.delta_leader_ms / 1000.0
+        projected = base + loss
+        rejoin = 1
+        traffic = []
+        for car in self.cars:
+            if car.index == me.index or not car.position:
+                continue
+            gap = car.delta_leader_ms / 1000.0
+            if gap < projected:
+                rejoin += 1
+            if abs(gap - projected) <= window:
+                traffic.append(car.name)
+        ahead = self.rival(me.position - 1)
+        behind = self.rival(me.position + 1)
+        undercut_gap = None
+        if behind is not None and self.gap_behind_s is not None:
+            undercut_gap = round(loss - self.gap_behind_s, 1)
+        return {
+            "pit_loss_s": loss,
+            "projected_rejoin_position": rejoin,
+            "projected_gap_to_leader_s": round(projected, 1),
+            "gap_to_car_ahead_s": self.gap_ahead_s,
+            "gap_to_car_behind_s": self.gap_behind_s,
+            "traffic_on_exit": traffic,
+            "undercut_margin_s": undercut_gap,
+            "car_ahead": ahead.name if ahead else None,
+            "car_behind": behind.name if behind else None,
+        }
+
+    def systems(self) -> dict[str, Any]:
+        me = self.player
+        surface = me.tyre_surface_c
+        inner = me.tyre_inner_c
+        carcass_delta = None
+        if surface and inner:
+            carcass_delta = round(
+                sum(inner) / len(inner) - sum(surface) / len(surface), 1
+            )
+        return {
+            "ers_pct": round(100.0 * me.ers_joules / 4_000_000.0, 0),
+            "ers_mode": ERS_MODES.get(me.ers_mode, "unknown"),
+            "ers_harvested_mj": round(
+                (me.ers_harvested_mguk_j + me.ers_harvested_mguh_j) / 1_000_000.0, 2
+            ),
+            "ers_deployed_mj": round(me.ers_deployed_j / 1_000_000.0, 2),
+            "fuel_mix": FUEL_MIXES.get(me.fuel_mix, "unknown"),
+            "brake_bias_pct": me.brake_bias,
+            "engine_temp_c": me.engine_temp_c,
+            "brake_temps_c": _corner_dict(me.brake_temps_c),
+            "drs_allowed": bool(me.drs_allowed),
+            "drs_activation_distance_m": me.drs_activation_distance_m,
+            "tyre_carcass_delta_c": carcass_delta,
+        }
+
     def rival(self, reference: str | int) -> CarState | None:
         if isinstance(reference, int) or str(reference).isdigit():
             pos = int(reference)
@@ -961,5 +1118,9 @@ class RaceState:
                 "grid": self.grid(),
                 "final_classification": self.final_classification,
                 "motion": self.motion,
+                "pace": self.pace_summary(),
+                "gap_trend_s": self.gap_trend_s(),
+                "systems": self.systems(),
+                "strategy": self.pit_projection(),
                 "recent_events": self.recent_events(),
             }

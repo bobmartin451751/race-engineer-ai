@@ -74,3 +74,16 @@ engineer:
   max_sentences: 2
   proactive: true       # speak up about tyres, fuel, flags, pit window, rain
   cooldown_s: 20        # minimum seconds between unsolicited radio calls
+
+strategy:
+  pit_loss_s: 21.0      # seconds lost in the pit lane at this track
+  traffic_window_s: 2.0 # cars within this gap of your rejoin count as traffic
+
+overlay:
+  enabled: true         # launch the always-on-top panel with the engineer
+  state_file: .temp/live_state.json
+  x: 40
+  y: 40
+  scale: 1.0
+  opacity: 0.88
+  toggle_key: f10       # show/hide the panel

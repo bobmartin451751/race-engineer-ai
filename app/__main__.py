@@ -160,6 +160,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coverage", action="store_true",
                         help="print per-packet reception counts and any unknown packets")
     parser.add_argument("--test-tts", action="store_true", help="speak a test line")
+    parser.add_argument("--overlay", action="store_true",
+                        help="run only the telemetry overlay window")
     parser.add_argument("--ask", help="ask one question, print and speak the answer, then exit")
     parser.add_argument("--text-only", action="store_true", help="no mic, no speech output")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -182,6 +184,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.coverage:
         return _print_telemetry(cfg, coverage=True)
+
+    if args.overlay:
+        from .overlay import Overlay
+
+        Overlay(cfg).run()
+        return 0
 
     if args.test_tts:
         from .voice.audio import play, resolve_device

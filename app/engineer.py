@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import random
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
@@ -114,6 +118,12 @@ class RaceEngineer:
         self._partial_busy = threading.Event()
         self._threads: list[threading.Thread] = []
         self._last_connected: bool | None = None
+        self._overlay_proc: subprocess.Popen | None = None
+        self._overlay_path = cfg.resolve_path(
+            cfg.get("overlay.state_file", ".temp/live_state.json")
+        )
+        self.state.pit_loss_s = float(cfg.get("strategy.pit_loss_s", 21.0))
+        self.state.traffic_window_s = float(cfg.get("strategy.traffic_window_s", 2.0))
 
     # ------------------------------------------------------------------
     def start(self) -> None:
@@ -152,6 +162,9 @@ class RaceEngineer:
 
         self._spawn(self._proactive_loop, "proactive")
         self._spawn(self._warm_up, "warmup")
+        if bool(self.cfg.get("overlay.enabled", True)):
+            self._spawn(self._overlay_writer, "overlay-state")
+            self._launch_overlay()
 
     def _spawn(self, target, name: str) -> None:
         thread = threading.Thread(target=target, name=name, daemon=True)
@@ -166,6 +179,39 @@ class RaceEngineer:
             log.info("speech recognition ready in %.1fs", time.time() - started)
         except Exception as exc:  # noqa: BLE001
             log.error("speech recognition failed to load: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _overlay_writer(self) -> None:
+        path = self._overlay_path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning("cannot create overlay state directory: %s", exc)
+            return
+        temp = path.with_suffix(path.suffix + ".tmp")
+        while self._running.is_set():
+            try:
+                snap = self.state.snapshot()
+                temp.write_text(json.dumps(snap, default=str), encoding="utf-8")
+                os.replace(temp, path)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("overlay state write failed: %s", exc)
+            time.sleep(0.25)
+
+    def _launch_overlay(self) -> None:
+        exe = sys.executable
+        pythonw = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(pythonw):
+            exe = pythonw
+        cmd = [exe, "-m", "app.overlay", "--config", str(self.cfg.path)]
+        try:
+            self._overlay_proc = subprocess.Popen(
+                cmd, cwd=str(config_mod.PROJECT_ROOT), close_fds=True
+            )
+            log.info("overlay started (toggle %s)",
+                     str(self.cfg.get("overlay.toggle_key", "f10")).upper())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not start overlay: %s", exc)
 
     # ------------------------------------------------------------------
     def on_ptt_start(self) -> None:
@@ -306,6 +352,15 @@ class RaceEngineer:
                 return self._ensure_answer(reply.text, question)
             except LLMError as exc:
                 log.warning("smart provider failed: %s", exc)
+                if "401" in str(exc) or "Authentication" in str(exc):
+                    log.error(
+                        "the %s API key was rejected; using the local model for this session",
+                        self.smart.name,
+                    )
+                    self.smart = None
+                client = self.local if self.local.health()[0] else None
+                escalate = False
+                messages = prompts.build_messages(self.state, question, compact=True)
 
         if client is not None:
             deadline = float(
@@ -453,6 +508,12 @@ class RaceEngineer:
             audio.stop_playback()
         except Exception:  # noqa: BLE001
             pass
+        if self._overlay_proc is not None and self._overlay_proc.poll() is None:
+            try:
+                self._overlay_proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+            self._overlay_proc = None
         self.listener.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
         print("Engineer offline.")

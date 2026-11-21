@@ -62,6 +62,8 @@ Set `audio.ptt_mode: hold` in `config.yaml` if you prefer push-to-talk.
 | `.\run.cmd --ask "how's my fuel?"` | One question, then exit |
 | `.\run.cmd --telemetry` | Print live telemetry, no voice — use this to confirm F1 24 is sending |
 | `.\run.cmd --coverage` | Per-packet reception counts, unknown packet ids and size mismatches |
+| `.\run.cmd --overlay` | Run only the overlay window (the engineer launches it automatically) |
+| `.\run-overlay.cmd` | Same as `--overlay`, detached with no console |
 | `.\run.cmd --check` | Check packages, models, API key, audio devices |
 | `.\run.cmd --devices` | List audio device names and indices |
 | `.\run.cmd --test-tts` | Speak a test radio call |
@@ -91,6 +93,32 @@ size-checked at import, and all 22 cars are tracked:
 
 If the game ever sends an id or size the spec does not define, `--coverage`
 reports it instead of dropping it silently.
+
+## Overlay
+
+The engineer starts an always-on-top panel automatically:
+
+```
+LAP 7/12    P4    +0.8
+287 km/h   GEAR 7   DRS
+FUEL 61.2 kg   +1.8 laps
+MEDIUM 12 laps   wear 42%   life ~8
+[wear bar]
+ERS 62%   OVERTAKE   MIX STANDARD
+[ERS bar]
+GAP ▲ 0.8   BEHIND 0.9
+1:22.4   1:22.1   1:22.6
+PIT WINDOW  L5-7
+GREEN
+```
+
+- **Drag** it anywhere with the left mouse button.
+- **F10** shows and hides it.
+- **Esc** closes it.
+- It works over **borderless or windowed** F1 24. Exclusive fullscreen hides any
+  overlay — switch the game to borderless.
+- Tune position, size and transparency under `overlay:` in `config.yaml`.
+- If it says "waiting for engineer data", `run.cmd` is not running.
 
 ## How it works
 
@@ -142,6 +170,13 @@ say "over", pause for `end_on_silence_s`, or tap again. Set `hold` for classic
 push-to-talk. `audio.over_words` changes the trigger words. If "over" is missed,
 the silence fallback still sends the question.
 
+**Strategy.** `strategy.pit_loss_s` is the time lost in the pit lane at this
+track; it drives the rejoin position and undercut projections. `traffic_window_s`
+controls how close a car must be to count as pit-exit traffic.
+
+**Overlay.** `overlay.scale`, `overlay.opacity`, `overlay.x`, `overlay.y` and
+`overlay.toggle_key`. Set `overlay.enabled: false` to skip it entirely.
+
 **Audio routing.** Set `audio.input_device` / `audio.output_device` to a name
 substring or index from `--devices`. Route the engineer to the headset and keep
 game audio where you want it.
@@ -159,11 +194,14 @@ not compete with the game for VRAM.
 | "I have no telemetry" | `.\run.cmd --telemetry` while driving. Check UDP format is **2024**, IP `127.0.0.1`, port `20777`, and that Windows Firewall allows F1 24 |
 | Everything is offline / no reply | Start `.\start-llm.cmd`; check `.\run.cmd --check` |
 | Smart answers never happen | `DEEPSEEK_API_KEY` is missing or set after the terminal opened |
+| "deepseek API key was rejected" | The key is invalid or expired — create a new one at platform.deepseek.com, `setx DEEPSEEK_API_KEY "..."`, reopen the terminal. The engineer falls back to the local model for that session |
 | Mic never records | Windows Settings > Privacy > Microphone; check the default input in `--devices` |
 | Doesn't stop on "over" | Say it clearly at the end of the sentence; if it still misses, the 1.2 s silence fallback sends anyway. Try `stt.spotter_model: base.en` |
 | No voice output | `.\run.cmd --test-tts`; confirm `models/piper/piper.exe` and the `.onnx` exist |
 | Whisper CUDA errors | Keep `stt.device: cpu` (default). CUDA needs cuBLAS and cuDNN 9 on PATH |
 | Game stutters with the model running | `.\start-llm.cmd 16` or lower |
+| Overlay not visible | F1 24 is in exclusive fullscreen — switch to borderless; or it is hidden, press **F10** |
+| Overlay says "waiting for engineer data" | `run.cmd` is not running, or `overlay.enabled` is false |
 | Replies too long / waffly | Lower `brain.providers.*.max_tokens`, or set `escalate_min_words` higher |
 
 ## Notes
@@ -174,3 +212,4 @@ not compete with the game for VRAM.
 - The local model, Whisper and Piper all run offline; only escalated questions
   use the network.
 - Tests: `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`
+- Every field the engineer knows is documented in [DATA.md](DATA.md).

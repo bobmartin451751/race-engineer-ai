@@ -131,6 +131,30 @@ TOOL_SCHEMAS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_pace",
+            "description": "Lap and sector pace: best lap, last lap delta, sector deltas, rolling three-lap pace and trend.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_car_systems",
+            "description": "ERS charge, deploy mode, harvested/deployed energy, fuel mix, brake bias, engine temperature, brake temperatures, DRS state.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_strategy_projection",
+            "description": "Pit-stop projection: rejoin position, traffic on pit exit, gap after the stop, undercut margin.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -270,6 +294,14 @@ def rival_report(state: RaceState, reference: str) -> str:
     ]
     if car.last_lap_ms:
         parts.append(f"last lap {car.last_lap_ms / 1000.0:.3f}")
+    if car.tyre_wear:
+        parts.append(f"{max(car.tyre_wear):.0f} percent tyre wear")
+    life = car.predicted_tyre_life
+    if life is not None:
+        parts.append(
+            f"about {life:.0f} laps of tyre life left, likely to stop around lap "
+            f"{car.lap + round(life)}"
+        )
     if car.gap_ahead_ms:
         parts.append(f"{car.gap_ahead_ms / 1000.0:.1f} seconds behind the car ahead")
     if car.penalties_s:
@@ -352,6 +384,56 @@ def setup_report(state: RaceState) -> str:
     return "; ".join(f"{key.replace('_', ' ')} {value}" for key, value in setup.items()) + "."
 
 
+def pace_report(state: RaceState) -> str:
+    pace = state.pace_summary()
+    if not pace:
+        return "No completed laps yet."
+    trend = pace["pace_trend_s"]
+    if trend is None:
+        trend_text = "no trend yet"
+    elif trend < -0.05:
+        trend_text = "improving"
+    elif trend > 0.05:
+        trend_text = "degrading"
+    else:
+        trend_text = "stable"
+    sectors = pace["last_sectors_s"]
+    deltas = pace["sector_deltas_s"]
+    return (
+        f"Best lap {pace['best_lap_s']} seconds, last lap {pace['last_lap_s']} "
+        f"({pace['delta_to_best_s']:+.3f}). "
+        f"Last sectors {sectors['s1']}, {sectors['s2']}, {sectors['s3']} "
+        f"(deltas {deltas['s1']:+.3f}, {deltas['s2']:+.3f}, {deltas['s3']:+.3f}). "
+        f"Rolling pace {pace['rolling_pace_3_s']}, {trend_text}."
+    )
+
+
+def systems_report(state: RaceState) -> str:
+    s = state.systems()
+    brakes = s.get("brake_temps_c", {})
+    hottest_brake = max(brakes.values()) if brakes else 0
+    return (
+        f"ERS {s['ers_pct']:.0f} percent, mode {s['ers_mode']}, "
+        f"harvested {s['ers_harvested_mj']} megajoules, deployed {s['ers_deployed_mj']}. "
+        f"Fuel mix {s['fuel_mix']}. Brake bias {s['brake_bias_pct']} percent, "
+        f"hottest brake {hottest_brake} celsius. Engine {s['engine_temp_c']} celsius. "
+        f"DRS {'available' if s['drs_allowed'] else 'not available'}."
+    )
+
+
+def strategy_report(state: RaceState) -> str:
+    s = state.pit_projection()
+    if not s:
+        return "No position data yet."
+    traffic = ", ".join(s["traffic_on_exit"]) if s["traffic_on_exit"] else "clear air"
+    return (
+        f"Pit loss about {s['pit_loss_s']} seconds. You would rejoin around "
+        f"P{s['projected_rejoin_position']}, {s['projected_gap_to_leader_s']} seconds "
+        f"off the lead. Exit traffic: {traffic}. "
+        f"Undercut margin {s['undercut_margin_s']} seconds."
+    )
+
+
 PIT_STATUS_TEXT = {0: "invalid", 1: "inactive", 2: "racing", 3: "finished", 4: "DNF"}
 WEATHER_TEXT = {
     0: "clear", 1: "light cloud", 2: "overcast", 3: "light rain", 4: "heavy rain",
@@ -373,6 +455,9 @@ HANDLERS = {
     "get_damage_report": lambda state, args: damage_report(state),
     "get_weather_detail": lambda state, args: weather_detail(state),
     "get_setup": lambda state, args: setup_report(state),
+    "get_pace": lambda state, args: pace_report(state),
+    "get_car_systems": lambda state, args: systems_report(state),
+    "get_strategy_projection": lambda state, args: strategy_report(state),
 }
 
 
@@ -420,6 +505,15 @@ def quick_answer(text: str, state: RaceState) -> str | None:
             f"{other.name} is {where}, {gap_text}, on {other.compound_name} tyres "
             f"{other.tyre_age_laps} laps old."
         )
+
+    if any(word in lowered for word in ("ers", "battery", "engine temp", "brake temp", "fuel mix", "brake bias")):
+        return systems_report(state)
+
+    if any(word in lowered for word in ("pace", "sector", "delta to best")):
+        return pace_report(state)
+
+    if any(word in lowered for word in ("rejoin", "pit loss", "traffic", "undercut", "overcut")):
+        return strategy_report(state)
 
     if any(word in lowered for word in ("fuel", "lift and coast", "save")):
         surplus = state.fuel_surplus_laps()

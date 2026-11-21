@@ -174,6 +174,11 @@ def _status_packet(frame: int, now: float, fuel: float, wear: float,
         s.vehicle_fia_flags = 1
         s.ers_store_energy = 3_200_000
         s.ers_deploy_mode = 1
+        s.ers_harvested_this_lap_mguk = 1_100_000
+        s.ers_harvested_this_lap_mguh = 400_000
+        s.ers_deployed_this_lap = 2_100_000
+        s.front_brake_bias = 56
+        s.drs_activation_distance = 0
     return bytes(pkt)
 
 
