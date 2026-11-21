@@ -233,5 +233,53 @@ class AdvancedDataTests(unittest.TestCase):
         self.assertIn("Best lap", tools.quick_answer("how is my pace?", state))
 
 
+class TyreTests(unittest.TestCase):
+    def _status_state(self, actual: int, visual: int) -> RaceState:
+        state = RaceState()
+        pid, packet, header = p.parse_packet(simulator._session_packet(0, 0))
+        state.apply(pid, packet, header)
+        pid, packet, header = p.parse_packet(
+            simulator._status_packet(0, 0, 70, 10, actual, 1, None, 1)
+        )
+        for car in packet.car_status_data:
+            car.actual_tyre_compound = actual
+            car.visual_tyre_compound = visual
+        state.apply(pid, packet, header)
+        return state
+
+    def test_visual_compound_wins_over_actual(self):
+        state = self._status_state(actual=18, visual=17)
+        self.assertEqual(state.player.compound_name, "medium")
+        self.assertEqual(state.snapshot()["tyre"]["compound"], "medium")
+        self.assertEqual(state.snapshot()["tyre"]["visual_code"], 17)
+
+    def test_unknown_visual_falls_back_to_actual(self):
+        state = self._status_state(actual=16, visual=0)
+        self.assertEqual(state.player.compound_name, "soft")
+
+    def test_tyre_sets_report_visual_compound(self):
+        state = RaceState()
+        pid, packet, header = p.parse_packet(simulator._tyre_sets_packet(0, 0, 0))
+        state.apply(pid, packet, header)
+        sets = state.cars[0].tyre_sets
+        self.assertTrue(sets)
+        self.assertEqual(sets[0]["compound"], "medium")  # sim set 0: visual 17
+        self.assertIn("actual", sets[0])
+
+    def test_shared_tyre_life_estimate(self):
+        state = RaceState()
+        for lap, wear in ((1, 10.0), (3, 16.0)):
+            pid, packet, header = p.parse_packet(
+                simulator._lap_packet(0, 0, lap, 0.5)
+            )
+            state.apply(pid, packet, header)
+            pid, packet, header = p.parse_packet(
+                simulator._damage_packet(0, 0, wear)
+            )
+            state.apply(pid, packet, header)
+        self.assertAlmostEqual(state.player.wear_rate_per_lap, 3.0)
+        self.assertAlmostEqual(state.player.predicted_tyre_life, 23.0)
+
+
 if __name__ == "__main__":
     unittest.main()

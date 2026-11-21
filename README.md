@@ -62,6 +62,7 @@ Set `audio.ptt_mode: hold` in `config.yaml` if you prefer push-to-talk.
 | `.\run.cmd --ask "how's my fuel?"` | One question, then exit |
 | `.\run.cmd --telemetry` | Print live telemetry, no voice — use this to confirm F1 24 is sending |
 | `.\run.cmd --coverage` | Per-packet reception counts, unknown packet ids and size mismatches |
+| `.\run.cmd --tyres` | Dump raw compound codes, wear, damage, temps and both corner orders |
 | `.\run.cmd --overlay` | Run only the overlay window (the engineer launches it automatically) |
 | `.\run-overlay.cmd` | Same as `--overlay`, detached with no console |
 | `.\run.cmd --check` | Check packages, models, API key, audio devices |
@@ -202,6 +203,8 @@ not compete with the game for VRAM.
 | Game stutters with the model running | `.\start-llm.cmd 16` or lower |
 | Overlay not visible | F1 24 is in exclusive fullscreen — switch to borderless; or it is hidden, press **F10** |
 | Overlay says "waiting for engineer data" | `run.cmd` is not running, or `overlay.enabled` is false |
+| Compound looks wrong | Names now come from the visual compound. `.\run.cmd --tyres` prints the raw codes to confirm |
+| Corners look swapped | `.\run.cmd --tyres` prints wear/temps in the spec order and the alternative order — compare with the in-game MFD |
 | Replies too long / waffly | Lower `brain.providers.*.max_tokens`, or set `escalate_min_words` higher |
 
 ## Notes

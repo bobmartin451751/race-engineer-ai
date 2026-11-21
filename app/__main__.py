@@ -75,6 +75,54 @@ def _print_telemetry(cfg: config_mod.Config, coverage: bool = False) -> int:
     return 0
 
 
+def _print_tyres(cfg: config_mod.Config) -> int:
+    state = RaceState()
+    listener = TelemetryListener(
+        state,
+        host=cfg.get("telemetry.host", "0.0.0.0"),
+        port=int(cfg.get("telemetry.port", 20777)),
+    )
+    listener.start()
+    if listener.last_error:
+        print(listener.last_error)
+        return 1
+    print("Waiting for telemetry (drive out of the pits)...")
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if state.connected and state.player.name != "unknown":
+            break
+        time.sleep(0.2)
+    if not state.connected:
+        print("No telemetry received.")
+        listener.stop()
+        return 1
+
+    me = state.player
+    corners = ("rear_left", "rear_right", "front_left", "front_right")
+    alt = ("front_left", "front_right", "rear_left", "rear_right")
+    print(f"\ndriver {me.name}   lap {me.lap}   position {me.position}")
+    print(
+        f"compound: visual={me.visual_compound_code} actual={me.compound_code}"
+        f"  ->  {me.compound_name}"
+    )
+    print("wear    (spec order RL,RR,FL,FR):", dict(zip(corners, me.tyre_wear)))
+    print("wear    (if FL,FR,RL,RR)       :", dict(zip(alt, me.tyre_wear)))
+    print("damage  (RL,RR,FL,FR):", dict(zip(corners, me.tyre_damage)))
+    print("surface (RL,RR,FL,FR):", dict(zip(corners, me.tyre_surface_c)))
+    print("inner   (RL,RR,FL,FR):", dict(zip(corners, me.tyre_inner_c)))
+    print("pressure(RL,RR,FL,FR):", dict(zip(corners, me.tyre_pressure_psi)))
+    fitted = [s for s in me.tyre_sets if s["fitted"]]
+    print("fitted set:", fitted[0] if fitted else "none")
+    print(
+        "wear rate:",
+        round(me.wear_rate_per_lap, 2) if me.wear_rate_per_lap else None,
+        " predicted life:",
+        round(me.predicted_tyre_life, 1) if me.predicted_tyre_life else None,
+    )
+    listener.stop()
+    return 0
+
+
 def _check(cfg: config_mod.Config) -> int:
     print("race-engineer-ai setup check\n")
     ok = True
@@ -157,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--devices", action="store_true", help="list audio devices")
     parser.add_argument("--check", action="store_true", help="check models, key, audio")
     parser.add_argument("--telemetry", action="store_true", help="print telemetry only")
+    parser.add_argument("--tyres", action="store_true",
+                        help="dump raw tyre wear/damage/temps with both corner orders")
     parser.add_argument("--coverage", action="store_true",
                         help="print per-packet reception counts and any unknown packets")
     parser.add_argument("--test-tts", action="store_true", help="speak a test line")
@@ -181,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.telemetry:
         return _print_telemetry(cfg)
+
+    if args.tyres:
+        return _print_tyres(cfg)
 
     if args.coverage:
         return _print_telemetry(cfg, coverage=True)

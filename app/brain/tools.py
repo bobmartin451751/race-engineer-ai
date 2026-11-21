@@ -198,8 +198,7 @@ def tyre_status(state: RaceState) -> str:
         f"{c} {int(t)}" for c, t in zip(corners, state.tyre_surface_c)
     )
     parts = [
-        f"{state.compound_name} tyres"
-        + (f" ({state.compound_c_index})" if state.compound_c_index else ""),
+        f"{state.compound_name} tyres",
         f"{state.tyre_age_laps} laps old",
         f"wear: {wear_text}",
         f"surface temperatures: {temp_text} celsius",

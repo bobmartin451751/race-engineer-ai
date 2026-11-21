@@ -62,7 +62,8 @@ folded into `app/telemetry/state.py`.
 
 | Field | Unit | Notes |
 |---|---|---|
-| `tyre.compound`, `tyre.c_index` | text | e.g. medium, C4 |
+| `tyre.compound` | text | soft / medium / hard / intermediate / wet, taken from `m_visualTyreCompound` (what the game displays) |
+| `tyre.visual_code`, `tyre.actual_code` | raw | raw game codes, for debugging with `--tyres` |
 | `tyre.age_laps` | laps | |
 | `tyre.wear_pct` | % per corner | order: rear-left, rear-right, front-left, front-right |
 | `tyre.damage_pct` | % per corner | |
@@ -70,6 +71,11 @@ folded into `app/telemetry/state.py`.
 | `tyre.pressure_psi` | psi | |
 | `tyre.wear_rate_per_lap` | %/lap | learned from damage packets across laps |
 | `tyre.predicted_life_laps` | laps | based on wear rate, 15 % safety margin |
+
+F1 24's `m_actualTyreCompound` is **not** a reliable soft/medium/hard label at
+every track — at Las Vegas the fitted set read actual `hard` while the game
+displayed `medium`. The visual compound is authoritative; the actual code is
+kept only for raw diagnostics.
 
 The life estimate is a linear projection of recent wear. It is a guide, not a
 guarantee — the game's own tyre model is not exposed.

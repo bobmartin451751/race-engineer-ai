@@ -50,6 +50,15 @@ ACTUAL_COMPOUNDS = {
 FIA_FLAGS = {-1: "unknown", 0: "none", 1: "green", 2: "blue", 3: "yellow", 4: "red"}
 ERS_MODES = {0: "none", 1: "medium", 2: "hotlap", 3: "overtake"}
 FUEL_MIXES = {0: "lean", 1: "standard", 2: "rich", 3: "max"}
+
+# m_visualTyreCompound is what the game itself displays. It is the reliable
+# source for soft/medium/hard; m_actualTyreCompound must not be used for names.
+VISUAL_COMPOUNDS = {
+    16: "soft", 17: "medium", 18: "hard",
+    7: "intermediate", 8: "wet",
+    11: "supersoft", 12: "soft", 13: "medium", 14: "hard", 15: "wet",
+    19: "supersoft", 20: "soft", 21: "medium", 22: "hard",
+}
 SAFETY_CAR = {0: "none", 1: "safety car", 2: "virtual safety car", 3: "formation lap"}
 PIT_STATUS = {0: "on track", 1: "in pit lane", 2: "in pit box"}
 RESULT_STATUS = {
@@ -175,6 +184,9 @@ class CarState:
 
     @property
     def compound_name(self) -> str:
+        name = VISUAL_COMPOUNDS.get(self.visual_compound_code)
+        if name:
+            return name
         return ACTUAL_COMPOUNDS.get(self.compound_code, ("unknown", None))[0]
 
     @property
@@ -628,11 +640,15 @@ class RaceState:
             s = packet.tyre_set_data[i]
             if not s.actual_tyre_compound:
                 continue
+            actual_name = ACTUAL_COMPOUNDS.get(int(s.actual_tyre_compound), ("unknown", None))[0]
+            visual_name = VISUAL_COMPOUNDS.get(int(s.visual_tyre_compound), actual_name)
             sets.append(
                 {
                     "index": i,
-                    "compound": ACTUAL_COMPOUNDS.get(int(s.actual_tyre_compound), ("unknown", None))[0],
-                    "visual": ACTUAL_COMPOUNDS.get(int(s.visual_tyre_compound), ("unknown", None))[0],
+                    "compound": visual_name,
+                    "actual": actual_name,
+                    "visual_code": int(s.visual_tyre_compound),
+                    "actual_code": int(s.actual_tyre_compound),
                     "wear": int(s.wear),
                     "available": bool(s.available),
                     "laps_left": int(s.life_span),
@@ -894,10 +910,7 @@ class RaceState:
         return self.fuel_kg / self.fuel_per_lap_kg - (self.laps_remaining() or 0)
 
     def predicted_tyre_life(self) -> float | None:
-        if not self.wear_per_lap or self.wear_per_lap <= 0.01:
-            return None
-        worst = max(self.tyre_wear) if self.tyre_wear else 0.0
-        return max(0.0, (100.0 - worst - 15.0) / self.wear_per_lap)
+        return self.player.predicted_tyre_life
 
     def grid(self) -> list[dict[str, Any]]:
         rows = [car.to_dict() for car in self.cars if car.position > 0]
@@ -1079,14 +1092,15 @@ class RaceState:
                 if self.fuel_surplus_laps() is not None else None,
                 "tyre": {
                     "compound": me.compound_name,
-                    "c_index": me.compound_c_index,
+                    "actual_code": me.compound_code,
+                    "visual_code": me.visual_compound_code,
                     "age_laps": me.tyre_age_laps,
                     "wear_pct": _corner_dict(me.tyre_wear),
                     "damage_pct": _corner_dict(me.tyre_damage),
-                    "wear_rate_per_lap": round(self.wear_per_lap, 2)
-                    if self.wear_per_lap else None,
-                    "predicted_life_laps": round(self.predicted_tyre_life(), 1)
-                    if self.predicted_tyre_life() is not None else None,
+                    "wear_rate_per_lap": round(me.wear_rate_per_lap, 2)
+                    if me.wear_rate_per_lap else None,
+                    "predicted_life_laps": round(me.predicted_tyre_life, 1)
+                    if me.predicted_tyre_life is not None else None,
                     "surface_c": _corner_dict(me.tyre_surface_c),
                     "inner_c": _corner_dict(me.tyre_inner_c),
                     "pressure_psi": _corner_dict(me.tyre_pressure_psi),
