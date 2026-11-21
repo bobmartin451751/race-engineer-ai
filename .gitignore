@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Models and binaries (large, downloaded by setup.ps1)
+models/*
+!models/.gitkeep
+
+# Local state
+.temp/
+*.log
+config.local.yaml
+.env
