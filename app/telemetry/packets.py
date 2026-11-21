@@ -33,6 +33,7 @@ CAR_DAMAGE = 10
 SESSION_HISTORY = 11
 TYRE_SETS = 12
 MOTION_EX = 13
+TIME_TRIAL = 14
 
 PACKET_NAMES = {
     MOTION: "motion",
@@ -49,6 +50,7 @@ PACKET_NAMES = {
     SESSION_HISTORY: "session_history",
     TYRE_SETS: "tyre_sets",
     MOTION_EX: "motion_ex",
+    TIME_TRIAL: "time_trial",
 }
 
 
@@ -287,7 +289,6 @@ class CarDamageData(_Struct):
         ("tyres_wear", C.c_float * 4),
         ("tyres_damage", C.c_uint8 * 4),
         ("brakes_damage", C.c_uint8 * 4),
-        ("tyre_blisters", C.c_uint8 * 4),
         ("front_left_wing_damage", C.c_uint8),
         ("front_right_wing_damage", C.c_uint8),
         ("rear_wing_damage", C.c_uint8),
@@ -326,10 +327,33 @@ class TyreSetData(_Struct):
 # --- full packets ---------------------------------------------------------
 
 
+class CarMotionData(_Struct):
+    _fields_ = [
+        ("world_position_x", C.c_float),
+        ("world_position_y", C.c_float),
+        ("world_position_z", C.c_float),
+        ("world_velocity_x", C.c_float),
+        ("world_velocity_y", C.c_float),
+        ("world_velocity_z", C.c_float),
+        ("world_forward_dir_x", C.c_int16),
+        ("world_forward_dir_y", C.c_int16),
+        ("world_forward_dir_z", C.c_int16),
+        ("world_right_dir_x", C.c_int16),
+        ("world_right_dir_y", C.c_int16),
+        ("world_right_dir_z", C.c_int16),
+        ("g_force_lateral", C.c_float),
+        ("g_force_longitudinal", C.c_float),
+        ("g_force_vertical", C.c_float),
+        ("yaw", C.c_float),
+        ("pitch", C.c_float),
+        ("roll", C.c_float),
+    ]
+
+
 class PacketMotionData(_Struct):
     _fields_ = [
         ("header", PacketHeader),
-        ("car_motion_data", C.c_uint8 * (MAX_CARS * 60)),
+        ("car_motion_data", CarMotionData * MAX_CARS),
     ]
 
 
@@ -415,6 +439,191 @@ class PacketTyreSetsData(_Struct):
     ]
 
 
+class CarSetupData(_Struct):
+    _fields_ = [
+        ("front_wing", C.c_uint8),
+        ("rear_wing", C.c_uint8),
+        ("on_throttle", C.c_uint8),
+        ("off_throttle", C.c_uint8),
+        ("front_camber", C.c_float),
+        ("rear_camber", C.c_float),
+        ("front_toe", C.c_float),
+        ("rear_toe", C.c_float),
+        ("front_suspension", C.c_uint8),
+        ("rear_suspension", C.c_uint8),
+        ("front_anti_roll_bar", C.c_uint8),
+        ("rear_anti_roll_bar", C.c_uint8),
+        ("front_suspension_height", C.c_uint8),
+        ("rear_suspension_height", C.c_uint8),
+        ("brake_pressure", C.c_uint8),
+        ("brake_bias", C.c_uint8),
+        ("engine_braking", C.c_uint8),
+        ("rear_left_tyre_pressure", C.c_float),
+        ("rear_right_tyre_pressure", C.c_float),
+        ("front_left_tyre_pressure", C.c_float),
+        ("front_right_tyre_pressure", C.c_float),
+        ("ballast", C.c_uint8),
+        ("fuel_load", C.c_float),
+    ]
+
+
+class PacketCarSetupData(_Struct):
+    _fields_ = [
+        ("header", PacketHeader),
+        ("car_setups", CarSetupData * MAX_CARS),
+        ("next_front_wing_value", C.c_float),
+    ]
+
+
+class FinalClassificationData(_Struct):
+    _fields_ = [
+        ("position", C.c_uint8),
+        ("num_laps", C.c_uint8),
+        ("grid_position", C.c_uint8),
+        ("points", C.c_uint8),
+        ("num_pit_stops", C.c_uint8),
+        ("result_status", C.c_uint8),
+        ("best_lap_time_in_ms", C.c_uint32),
+        ("total_race_time", C.c_double),
+        ("penalties_time", C.c_uint8),
+        ("num_penalties", C.c_uint8),
+        ("num_tyre_stints", C.c_uint8),
+        ("tyre_stints_actual", C.c_uint8 * 8),
+        ("tyre_stints_visual", C.c_uint8 * 8),
+        ("tyre_stints_end_laps", C.c_uint8 * 8),
+    ]
+
+
+class PacketFinalClassificationData(_Struct):
+    _fields_ = [
+        ("header", PacketHeader),
+        ("num_cars", C.c_uint8),
+        ("classification_data", FinalClassificationData * MAX_CARS),
+    ]
+
+
+class LobbyInfoData(_Struct):
+    _fields_ = [
+        ("ai_controlled", C.c_uint8),
+        ("team_id", C.c_uint8),
+        ("nationality", C.c_uint8),
+        ("platform", C.c_uint8),
+        ("name", C.c_char * 48),
+        ("car_number", C.c_uint8),
+        ("your_telemetry", C.c_uint8),
+        ("show_online_names", C.c_uint8),
+        ("tech_level", C.c_uint16),
+        ("ready_status", C.c_uint8),
+    ]
+
+
+class PacketLobbyInfoData(_Struct):
+    _fields_ = [
+        ("header", PacketHeader),
+        ("num_players", C.c_uint8),
+        ("lobby_players", LobbyInfoData * MAX_CARS),
+    ]
+
+
+class LapHistoryData(_Struct):
+    _fields_ = [
+        ("lap_time_in_ms", C.c_uint32),
+        ("sector1_time_ms_part", C.c_uint16),
+        ("sector1_time_minutes_part", C.c_uint8),
+        ("sector2_time_ms_part", C.c_uint16),
+        ("sector2_time_minutes_part", C.c_uint8),
+        ("sector3_time_ms_part", C.c_uint16),
+        ("sector3_time_minutes_part", C.c_uint8),
+        ("lap_valid_bit_flags", C.c_uint8),
+    ]
+
+
+class TyreStintHistoryData(_Struct):
+    _fields_ = [
+        ("end_lap", C.c_uint8),
+        ("tyre_actual_compound", C.c_uint8),
+        ("tyre_visual_compound", C.c_uint8),
+    ]
+
+
+class PacketSessionHistoryData(_Struct):
+    _fields_ = [
+        ("header", PacketHeader),
+        ("car_idx", C.c_uint8),
+        ("num_laps", C.c_uint8),
+        ("num_tyre_stints", C.c_uint8),
+        ("best_lap_time_lap_num", C.c_uint8),
+        ("best_sector1_lap_num", C.c_uint8),
+        ("best_sector2_lap_num", C.c_uint8),
+        ("best_sector3_lap_num", C.c_uint8),
+        ("lap_history_data", LapHistoryData * 100),
+        ("tyre_stints_history_data", TyreStintHistoryData * 8),
+    ]
+
+
+class MotionExData(_Struct):
+    _fields_ = [
+        ("suspension_position", C.c_float * 4),
+        ("suspension_velocity", C.c_float * 4),
+        ("suspension_acceleration", C.c_float * 4),
+        ("wheel_speed", C.c_float * 4),
+        ("wheel_slip_ratio", C.c_float * 4),
+        ("wheel_slip_angle", C.c_float * 4),
+        ("wheel_lat_force", C.c_float * 4),
+        ("wheel_long_force", C.c_float * 4),
+        ("height_of_cog_above_ground", C.c_float),
+        ("local_velocity_x", C.c_float),
+        ("local_velocity_y", C.c_float),
+        ("local_velocity_z", C.c_float),
+        ("angular_velocity_x", C.c_float),
+        ("angular_velocity_y", C.c_float),
+        ("angular_velocity_z", C.c_float),
+        ("angular_acceleration_x", C.c_float),
+        ("angular_acceleration_y", C.c_float),
+        ("angular_acceleration_z", C.c_float),
+        ("front_wheels_angle", C.c_float),
+        ("wheel_vert_force", C.c_float * 4),
+        ("front_aero_height", C.c_float),
+        ("rear_aero_height", C.c_float),
+        ("front_roll_angle", C.c_float),
+        ("rear_roll_angle", C.c_float),
+        ("chassis_yaw", C.c_float),
+    ]
+
+
+class PacketMotionExData(_Struct):
+    _fields_ = [
+        ("header", PacketHeader),
+        ("data", MotionExData),
+    ]
+
+
+class TimeTrialDataSet(_Struct):
+    _fields_ = [
+        ("car_idx", C.c_uint8),
+        ("team_id", C.c_uint8),
+        ("lap_time_in_ms", C.c_uint32),
+        ("sector1_time_in_ms", C.c_uint32),
+        ("sector2_time_in_ms", C.c_uint32),
+        ("sector3_time_in_ms", C.c_uint32),
+        ("traction_control", C.c_uint8),
+        ("gearbox_assist", C.c_uint8),
+        ("anti_lock_brakes", C.c_uint8),
+        ("equal_car_performance", C.c_uint8),
+        ("custom_setup", C.c_uint8),
+        ("valid", C.c_uint8),
+    ]
+
+
+class PacketTimeTrialData(_Struct):
+    _fields_ = [
+        ("header", PacketHeader),
+        ("player_session_best", TimeTrialDataSet),
+        ("personal_best", TimeTrialDataSet),
+        ("rival", TimeTrialDataSet),
+    ]
+
+
 # Expected wire sizes, from the F1 24 specification. Used to detect a
 # mismatched UDP format (e.g. the game left on the 2023 format).
 EXPECTED_SIZES = {
@@ -423,10 +632,16 @@ EXPECTED_SIZES = {
     LAP_DATA: 1285,
     EVENT: 45,
     PARTICIPANTS: 1350,
+    CAR_SETUPS: 1133,
     CAR_TELEMETRY: 1352,
     CAR_STATUS: 1239,
-    CAR_DAMAGE: 1041,
+    FINAL_CLASSIFICATION: 1020,
+    LOBBY_INFO: 1306,
+    CAR_DAMAGE: 953,
+    SESSION_HISTORY: 1460,
     TYRE_SETS: 231,
+    MOTION_EX: 237,
+    TIME_TRIAL: 101,
 }
 
 PACKET_CLASSES = {
@@ -435,10 +650,16 @@ PACKET_CLASSES = {
     LAP_DATA: PacketLapData,
     EVENT: PacketEventData,
     PARTICIPANTS: PacketParticipantsData,
+    CAR_SETUPS: PacketCarSetupData,
     CAR_TELEMETRY: PacketCarTelemetryData,
     CAR_STATUS: PacketCarStatusData,
+    FINAL_CLASSIFICATION: PacketFinalClassificationData,
+    LOBBY_INFO: PacketLobbyInfoData,
     CAR_DAMAGE: PacketCarDamageData,
+    SESSION_HISTORY: PacketSessionHistoryData,
     TYRE_SETS: PacketTyreSetsData,
+    MOTION_EX: PacketMotionExData,
+    TIME_TRIAL: PacketTimeTrialData,
 }
 
 

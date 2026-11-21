@@ -40,6 +40,51 @@ class ParseTests(unittest.TestCase):
     def test_short_datagram(self):
         self.assertIsNone(p.parse_packet(b"\x00\x01"))
 
+    def test_every_packet_type_roundtrips(self):
+        builders = [
+            simulator._session_packet(0, 0),
+            simulator._lap_packet(0, 0, 1, 0.5),
+            simulator._telemetry_packet(0, 0, 0.5),
+            simulator._status_packet(0, 0, 70, 10, 17, 1, None, 1),
+            simulator._damage_packet(0, 0, 10),
+            simulator._setup_packet(0, 0),
+            simulator._participants(0, 0),
+            simulator._session_history_packet(0, 0, 0, 3),
+            simulator._tyre_sets_packet(0, 0, 0),
+            simulator._motion_packet(0, 0, 0.5),
+            simulator._motion_ex_packet(0, 0, 0.5),
+            simulator._final_classification_packet(0, 0),
+            simulator._lobby_packet(0, 0),
+            simulator._event_packet(0, 0, "OVTK"),
+        ]
+        for data in builders:
+            pid, packet, header = p.parse_packet(data)
+            self.assertIsNotNone(packet, f"packet {pid} failed to parse")
+            self.assertEqual(len(data), p.EXPECTED_SIZES[pid])
+
+    def test_all_cars_tracked(self):
+        state = RaceState()
+        for data in (
+            simulator._session_packet(0, 0),
+            simulator._participants(0, 0),
+            simulator._lap_packet(0, 0, 3, 0.5),
+            simulator._status_packet(0, 0, 70, 12, 17, 2, 4, 3),
+        ):
+            pid, packet, header = p.parse_packet(data)
+            state.apply(pid, packet, header)
+        grid = state.grid()
+        self.assertEqual(len(grid), 22)
+        self.assertEqual(grid[0]["pos"], 1)
+        self.assertEqual(grid[0]["driver"], "Leclerc")
+        self.assertEqual(grid[3]["pos"], 4)
+        self.assertEqual(grid[3]["driver"], "You")
+        self.assertTrue(all(row["tyre"] for row in grid))
+        rival = state.rival(3)
+        self.assertIsNotNone(rival)
+        self.assertEqual(rival.name, "Hamilton")
+        rival = state.rival("verstappen")
+        self.assertEqual(rival.position, 2)
+
 
 class StateTests(unittest.TestCase):
     def setUp(self):
@@ -56,7 +101,9 @@ class StateTests(unittest.TestCase):
         self.state.apply(pid, packet, header)
 
     def _status(self, fuel):
-        pid, packet, header = p.parse_packet(simulator._status_packet(0, 0, fuel, 10, 17, 1))
+        pid, packet, header = p.parse_packet(
+            simulator._status_packet(0, 0, fuel, 10, 17, 1, 4, 1)
+        )
         self.state.apply(pid, packet, header)
 
     def test_session_fields(self):

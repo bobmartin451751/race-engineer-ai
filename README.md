@@ -59,10 +59,36 @@ same thing without the mic.
 | `.\run.cmd --text-only` | Run without mic or speech output (type questions) |
 | `.\run.cmd --ask "how's my fuel?"` | One question, then exit |
 | `.\run.cmd --telemetry` | Print live telemetry, no voice — use this to confirm F1 24 is sending |
+| `.\run.cmd --coverage` | Per-packet reception counts, unknown packet ids and size mismatches |
 | `.\run.cmd --check` | Check packages, models, API key, audio devices |
 | `.\run.cmd --devices` | List audio device names and indices |
 | `.\run.cmd --test-tts` | Speak a test radio call |
 | `python -m app.simulator --duration 120` | Fake telemetry so you can test without the game |
+
+## Telemetry coverage
+
+All 15 packet types in the F1 24 (2024 format) specification are decoded and
+size-checked at import, and all 22 cars are tracked:
+
+| Packet | Used for |
+|---|---|
+| Motion, Motion Ex | g-forces, suspension, ride heights |
+| Session | track, weather, forecast, pit window, flags |
+| Lap Data | position, laps, gaps, sectors, pit status — all cars |
+| Event | overtakes, penalties, safety car, flags |
+| Participants | driver names, teams, AI/human |
+| Car Setups | wings, suspension, pressures, brake bias, fuel load |
+| Car Telemetry | speed, gear, throttle, brake, DRS, temps — all cars |
+| Car Status | fuel, ERS, compound, tyre age, fuel mix — all cars |
+| Final Classification | results, points, race time, stints |
+| Lobby Info | lobby players and ready state |
+| Car Damage | tyre wear, damage, engine component wear — all cars |
+| Session History | per-lap times, sector times, tyre stints |
+| Tyre Sets | remaining sets, wear, expected life, lap delta |
+| Time Trial | personal best and rival delta in time trial |
+
+If the game ever sends an id or size the spec does not define, `--coverage`
+reports it instead of dropping it silently.
 
 ## How it works
 
@@ -79,9 +105,9 @@ F9 (hold) ──► mic ──► Whisper ──► question ───┤
                             Piper TTS ──► radio filter ──► headset
 ```
 
-- **Telemetry** (`app/telemetry`) decodes the 2024 packet format directly from the
-  UDP socket. Read-only, no memory access, no injection — the same approach as
-  SimHub and MoTeC.
+- **Telemetry** (`app/telemetry`) decodes all 15 packet types directly from the
+  UDP socket and keeps full state for all 22 cars. Read-only, no memory access,
+  no injection — the same approach as SimHub and MoTeC.
 - **Tools** (`app/brain/tools.py`) answer fuel/tyre/gap questions from real
   numbers, so the model never invents a figure.
 - **Routing**: factual questions (fuel, tyres, gaps, pit window, position, last

@@ -28,6 +28,7 @@ class ProactiveEngine:
         self._rain_warned = False
         self._gap_warned_lap = -99
         self._damage_warned = False
+        self._pit_stops: dict[int, int] = {}
         self._rules: list[tuple[str, Callable[[], str | None], float]] = [
             ("lap", self._lap_call, 10.0),
             ("wear", self._wear_call, 60.0),
@@ -38,6 +39,8 @@ class ProactiveEngine:
             ("flag", self._flag_call, 20.0),
             ("weather", self._weather_call, 300.0),
             ("gap_behind", self._gap_behind_call, 60.0),
+            ("rival_pit", self._rival_pit_call, 10.0),
+            ("undercut", self._undercut_call, 90.0),
             ("damage", self._damage_call, 120.0),
             ("invalid_lap", self._invalid_lap_call, 10.0),
         ]
@@ -190,6 +193,39 @@ class ProactiveEngine:
             return None
         self._gap_warned_lap = s.lap
         return f"Car behind is within {s.gap_behind_s:.1f} seconds. Defend the inside."
+
+    def _rival_pit_call(self) -> str | None:
+        s = self.state
+        me = s.player
+        message = None
+        for car in s.cars:
+            if car.index == me.index or not car.position:
+                continue
+            previous = self._pit_stops.get(car.index, car.pit_stops)
+            self._pit_stops[car.index] = car.pit_stops
+            if car.pit_stops > previous and message is None:
+                gap = abs(car.position - me.position)
+                if gap <= 2:
+                    message = (
+                        f"{car.name} has boxed. They are now on "
+                        f"{car.compound_name} tyres."
+                    )
+        return message
+
+    def _undercut_call(self) -> str | None:
+        s = self.state
+        me = s.player
+        if not me.position:
+            return None
+        behind = s.rival(me.position + 1)
+        if behind is None or s.gap_behind_s is None:
+            return None
+        if s.gap_behind_s <= 2.0 and behind.tyre_age_laps + 3 < me.tyre_age_laps:
+            return (
+                f"{behind.name} is on much fresher tyres, "
+                f"{behind.tyre_age_laps} laps old. Undercut threat."
+            )
+        return None
 
     def _damage_call(self) -> str | None:
         s = self.state

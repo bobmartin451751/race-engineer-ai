@@ -58,6 +58,79 @@ TOOL_SCHEMAS = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_grid",
+            "description": "Full running order: position, driver, gap to leader, tyre, tyre age, pit stops and status for every car.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_rival",
+            "description": "Detailed report on one rival, by race position or driver name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": "Race position as a digit, or part of the driver name",
+                    }
+                },
+                "required": ["reference"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_tyre_sets",
+            "description": "Remaining tyre sets for the player: compound, wear, available, expected life and lap delta.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_session_history",
+            "description": "All completed laps for the player with sector times, plus tyre stints.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_sector_times",
+            "description": "Best and most recent sector times for the player.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_damage_report",
+            "description": "Complete damage report for the player's car, including engine component wear.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather_detail",
+            "description": "Weather now and the full forecast with rain probability per sample.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_setup",
+            "description": "The player's current car setup.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -95,7 +168,7 @@ def fuel_status(state: RaceState) -> str:
 def tyre_status(state: RaceState) -> str:
     wear = state.tyre_wear
     life = state.predicted_tyre_life()
-    corners = ("front left", "front right", "rear left", "rear right")
+    corners = ("rear left", "rear right", "front left", "front right")
     wear_text = ", ".join(f"{c} {_fmt(w)} percent" for c, w in zip(corners, wear))
     temp_text = ", ".join(
         f"{c} {int(t)}" for c, t in zip(corners, state.tyre_surface_c)
@@ -160,12 +233,146 @@ def lap_history(state: RaceState) -> str:
     ) + "."
 
 
+def grid_summary(state: RaceState) -> str:
+    rows = state.grid()
+    if not rows:
+        return "No running order yet."
+    return "; ".join(
+        f"P{r['pos']} {r['driver']} {r['gap_to_leader_s']} seconds back on "
+        f"{r['tyre']} tyres {r['tyre_age']} laps old, {r['stops']} stops"
+        for r in rows
+    ) + "."
+
+
+def spoken_rival(car) -> str:
+    gap = car.delta_leader_ms / 1000.0 if car.delta_leader_ms else 0.0
+    if gap:
+        place = f"P{car.position}, {gap:.1f} seconds off the lead"
+    else:
+        place = f"P{car.position}, leading"
+    return (
+        f"{car.name} is {place}, on {car.compound_name} tyres "
+        f"{car.tyre_age_laps} laps old, {car.pit_stops} stops."
+    )
+
+
+def rival_report(state: RaceState, reference: str) -> str:
+    car = state.rival(reference)
+    if car is None:
+        return f"No car found matching {reference}."
+    parts = [
+        f"P{car.position} {car.name}",
+        f"{car.delta_leader_ms / 1000.0:.1f} seconds off the leader"
+        if car.delta_leader_ms else "leading",
+        f"{car.compound_name} tyres {car.tyre_age_laps} laps old",
+        f"{car.pit_stops} pit stops",
+        f"status {PIT_STATUS_TEXT.get(car.result_status, 'racing')}",
+    ]
+    if car.last_lap_ms:
+        parts.append(f"last lap {car.last_lap_ms / 1000.0:.3f}")
+    if car.gap_ahead_ms:
+        parts.append(f"{car.gap_ahead_ms / 1000.0:.1f} seconds behind the car ahead")
+    if car.penalties_s:
+        parts.append(f"{car.penalties_s} seconds of penalties")
+    return "; ".join(parts) + "."
+
+
+def tyre_set_report(state: RaceState) -> str:
+    sets = state.tyre_sets
+    if not sets:
+        return "No tyre set information received yet."
+    available = [s for s in sets if s["available"]]
+    if not available:
+        return "No new tyre sets available."
+    return "Available sets: " + "; ".join(
+        f"{s['compound']} with {s['laps_left']} laps of life, "
+        f"{s['wear']} percent wear, delta {s['delta_ms']} milliseconds"
+        for s in available
+    ) + "."
+
+
+def session_history_report(state: RaceState) -> str:
+    laps = state.session_laps
+    if not laps:
+        return "No session history received yet."
+    recent = laps[-5:]
+    lap_text = "; ".join(
+        f"lap {lap['lap']} {lap['time_s']} seconds "
+        f"(sectors {lap['s1_s']}, {lap['s2_s']}, {lap['s3_s']})"
+        for lap in recent
+    )
+    stints = state.tyre_stints
+    stint_text = ""
+    if stints:
+        stint_text = " Stints: " + ", ".join(
+            f"{s['compound']} to lap {s['end_lap']}" for s in stints
+        ) + "."
+    return lap_text + "." + stint_text
+
+
+def sector_times(state: RaceState) -> str:
+    me = state.player
+    if not me.session_laps:
+        return "No sector data received yet."
+    last = me.session_laps[-1]
+    return (
+        f"Last lap sectors {last['s1_s']}, {last['s2_s']}, {last['s3_s']} seconds. "
+        f"Best sectors {me.best_s1_ms / 1000.0:.3f}, {me.best_s2_ms / 1000.0:.3f}, "
+        f"{me.best_s3_ms / 1000.0:.3f}."
+    )
+
+
+def damage_report(state: RaceState) -> str:
+    me = state.player
+    wear = me.engine_wear or {}
+    return (
+        f"Front wing {me.wing_damage} percent, floor {me.floor_damage}, "
+        f"diffuser {me.diffuser_damage}, sidepod {me.sidepod_damage}, "
+        f"gearbox {me.gearbox_damage}, engine {me.engine_damage} percent. "
+        f"Engine wear: " + ", ".join(f"{k} {v} percent" for k, v in wear.items()) + "."
+    )
+
+
+def weather_detail(state: RaceState) -> str:
+    now = WEATHER_TEXT.get(state.weather, "unknown")
+    forecast = ", ".join(
+        f"in {s['minutes']} minutes {s['weather']} {s['rain_pct']} percent rain"
+        for s in state.forecast[:8]
+    )
+    return (
+        f"Now {now}, track {state.track_temp_c} celsius, air {state.air_temp_c}. "
+        f"Forecast: {forecast}."
+    )
+
+
+def setup_report(state: RaceState) -> str:
+    setup = state.setup
+    if not setup:
+        return "No setup data received yet."
+    return "; ".join(f"{key.replace('_', ' ')} {value}" for key, value in setup.items()) + "."
+
+
+PIT_STATUS_TEXT = {0: "invalid", 1: "inactive", 2: "racing", 3: "finished", 4: "DNF"}
+WEATHER_TEXT = {
+    0: "clear", 1: "light cloud", 2: "overcast", 3: "light rain", 4: "heavy rain",
+    5: "storm",
+}
+
+
 HANDLERS = {
     "get_fuel_status": lambda state, args: fuel_status(state),
     "get_tyre_status": lambda state, args: tyre_status(state),
     "get_race_status": lambda state, args: race_status(state),
     "get_gap": lambda state, args: gap(state, args.get("direction", "ahead")),
     "get_lap_history": lambda state, args: lap_history(state),
+    "get_grid": lambda state, args: grid_summary(state),
+    "get_rival": lambda state, args: rival_report(state, args.get("reference", "")),
+    "get_tyre_sets": lambda state, args: tyre_set_report(state),
+    "get_session_history": lambda state, args: session_history_report(state),
+    "get_sector_times": lambda state, args: sector_times(state),
+    "get_damage_report": lambda state, args: damage_report(state),
+    "get_weather_detail": lambda state, args: weather_detail(state),
+    "get_setup": lambda state, args: setup_report(state),
 }
 
 
@@ -189,6 +396,31 @@ def execute_tool(name: str, raw_args: str | dict, state: RaceState) -> str:
 def quick_answer(text: str, state: RaceState) -> str | None:
     """Deterministic spoken answer used for factual questions and as a fallback."""
     lowered = text.lower()
+
+    # A named rival always wins over the generic player-car keywords.
+    for car in state.cars:
+        if car.index == state.player_index or len(car.name) < 3:
+            continue
+        if car.name.lower() in lowered:
+            return spoken_rival(car)
+
+    if any(word in lowered for word in ("who", "which car", "what car")):
+        me = state.player
+        if "behind" in lowered:
+            other = state.rival(me.position + 1)
+            where = "behind"
+        else:
+            other = state.rival(me.position - 1)
+            where = "ahead"
+        if other is None:
+            return f"No car {where}."
+        gap = state.gap_behind_s if where == "behind" else state.gap_ahead_s
+        gap_text = f"{gap:.1f} seconds" if gap is not None else "close by"
+        return (
+            f"{other.name} is {where}, {gap_text}, on {other.compound_name} tyres "
+            f"{other.tyre_age_laps} laps old."
+        )
+
     if any(word in lowered for word in ("fuel", "lift and coast", "save")):
         surplus = state.fuel_surplus_laps()
         base = f"{state.fuel_kg:.1f} kilograms of fuel"

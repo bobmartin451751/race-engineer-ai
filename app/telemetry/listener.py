@@ -30,6 +30,9 @@ class TelemetryListener:
         self._thread: threading.Thread | None = None
         self.packets_per_second = 0.0
         self.last_error: str | None = None
+        self.packet_counts: dict[int, int] = {}
+        self.unknown_ids: dict[int, tuple[int, int]] = {}
+        self.size_mismatches: dict[int, int] = {}
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="telemetry", daemon=True)
@@ -39,6 +42,19 @@ class TelemetryListener:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)
+
+    def coverage_report(self) -> dict:
+        counts = {
+            p.PACKET_NAMES.get(k, str(k)): v for k, v in sorted(self.packet_counts.items())
+        }
+        return {
+            "counts": counts,
+            "unknown_ids": dict(self.unknown_ids),
+            "size_mismatches": {
+                p.PACKET_NAMES.get(k, str(k)): v for k, v in self.size_mismatches.items()
+            },
+            "packets_per_second": round(self.packets_per_second, 1),
+        }
 
     def _run(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -73,6 +89,7 @@ class TelemetryListener:
                 continue
             packet_id, packet, header = parsed
             if packet is None and header.packet_id in p.EXPECTED_SIZES:
+                self.size_mismatches[header.packet_id] = len(data)
                 if len(data) not in bad_sizes:
                     bad_sizes.add(len(data))
                     log.warning(
@@ -82,6 +99,17 @@ class TelemetryListener:
                         len(data),
                         p.EXPECTED_SIZES[header.packet_id],
                     )
+            if packet_id not in p.PACKET_CLASSES:
+                count, _ = self.unknown_ids.get(packet_id, (0, 0))
+                self.unknown_ids[packet_id] = (count + 1, len(data))
+                if count == 0:
+                    log.warning(
+                        "unrecognised packet id %s (%s bytes) - not in the 2024 spec",
+                        packet_id,
+                        len(data),
+                    )
+            else:
+                self.packet_counts[packet_id] = self.packet_counts.get(packet_id, 0) + 1
             self.state.apply(packet_id, packet, header)
             window_count += 1
             if self.on_packet:

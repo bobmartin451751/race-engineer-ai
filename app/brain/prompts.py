@@ -65,6 +65,20 @@ def _compact_block(snapshot: dict[str, Any]) -> str:
         f"track temp {snapshot.get('track_temp_c')} C, air {snapshot.get('air_temp_c')} C",
         f"penalties {snapshot.get('penalties_s')} s, pit stops {snapshot.get('pit_stops')}",
     ]
+    grid = snapshot.get("grid") or []
+    position = snapshot.get("position") or 0
+    nearby = [row for row in grid if abs(row["pos"] - position) <= 2 and row["pos"] != position]
+    if nearby:
+        lines.append(
+            "nearby: "
+            + "; ".join(
+                f"P{row['pos']} {row['driver']} {row['gap_to_leader_s']}s back, "
+                f"{row['tyre']} {row['tyre_age']} laps old, {row['stops']} stops"
+                for row in nearby
+            )
+        )
+    if snapshot.get("best_lap_s"):
+        lines.append(f"best lap {snapshot['best_lap_s']} s")
     recent = snapshot.get("recent_laps") or []
     if recent:
         lines.append(
@@ -133,6 +147,15 @@ def _engineer_notes(snapshot: dict[str, Any]) -> list[str]:
         notes.append(f"Safety car state: {snapshot['safety_car']}.")
     if snapshot.get("flag") in ("yellow", "red", "blue"):
         notes.append(f"Flag: {snapshot['flag']}.")
+    grid = snapshot.get("grid") or []
+    position = snapshot.get("position") or 0
+    for row in grid:
+        if row["pos"] in (position - 1, position + 1):
+            where = "ahead" if row["pos"] < position else "behind"
+            notes.append(
+                f"Car {where}: {row['driver']} on {row['tyre']} tyres, "
+                f"{row['tyre_age']} laps old, {row['stops']} stops."
+            )
     forecast = snapshot.get("rain_forecast") or []
     if forecast and snapshot.get("weather") in ("clear", "light cloud", "overcast"):
         notes.append("Weather: " + "; ".join(forecast[:2]) + ".")

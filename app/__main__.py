@@ -30,7 +30,7 @@ def _setup_logging(verbose: bool) -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def _print_telemetry(cfg: config_mod.Config) -> int:
+def _print_telemetry(cfg: config_mod.Config, coverage: bool = False) -> int:
     state = RaceState()
     listener = TelemetryListener(
         state,
@@ -50,6 +50,15 @@ def _print_telemetry(cfg: config_mod.Config) -> int:
             if not s["connected"]:
                 print(f"  no packets ({listener.packets_per_second:.0f} pkt/s)"
                       + (f" - {state.format_error}" if state.format_error else ""))
+                continue
+            if coverage:
+                report = listener.coverage_report()
+                counts = " ".join(f"{name}={count}" for name, count in report["counts"].items())
+                print(f"  {report['packets_per_second']} pkt/s | {counts}")
+                if report["unknown_ids"]:
+                    print(f"  UNKNOWN ids: {report['unknown_ids']}")
+                if report["size_mismatches"]:
+                    print(f"  SIZE MISMATCH: {report['size_mismatches']}")
                 continue
             print(
                 f"  {listener.packets_per_second:4.0f} pkt/s | "
@@ -148,6 +157,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--devices", action="store_true", help="list audio devices")
     parser.add_argument("--check", action="store_true", help="check models, key, audio")
     parser.add_argument("--telemetry", action="store_true", help="print telemetry only")
+    parser.add_argument("--coverage", action="store_true",
+                        help="print per-packet reception counts and any unknown packets")
     parser.add_argument("--test-tts", action="store_true", help="speak a test line")
     parser.add_argument("--ask", help="ask one question, print and speak the answer, then exit")
     parser.add_argument("--text-only", action="store_true", help="no mic, no speech output")
@@ -168,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.telemetry:
         return _print_telemetry(cfg)
+
+    if args.coverage:
+        return _print_telemetry(cfg, coverage=True)
 
     if args.test_tts:
         from .voice.audio import play, resolve_device

@@ -317,8 +317,10 @@ class RaceEngineer:
         print("  'status' for a snapshot, 'q' to quit")
         print()
         if initial_question:
-            deadline = time.time() + 3.0
-            while time.time() < deadline and not self.state.connected:
+            deadline = time.time() + 4.0
+            while time.time() < deadline:
+                if self.state.connected and self.state.player.name != "unknown":
+                    break
                 time.sleep(0.1)
             self.respond(initial_question)
             self.shutdown()
