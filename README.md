@@ -132,3 +132,4 @@ not compete with the game for VRAM.
 - DeepSeek costs roughly one or two cents for a full race of heavy questioning.
 - The local model, Whisper and Piper all run offline; only escalated questions
   use the network.
+- Tests: `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`
