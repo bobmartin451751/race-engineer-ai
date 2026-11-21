@@ -6,10 +6,13 @@ Run:  .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 import ctypes
 import unittest
 
+import numpy as np
+
 from app import simulator
 from app.brain import tools
 from app.telemetry import packets as p
 from app.telemetry.state import RaceState
+from app.voice import endpoint
 
 
 class LayoutTests(unittest.TestCase):
@@ -126,6 +129,54 @@ class StateTests(unittest.TestCase):
         self.assertIn("mediums", tools.quick_answer("how are my tyres?", self.state).lower())
         self.assertIn("Lap", tools.quick_answer("where am I?", self.state))
         self.assertIn("Pit window", tools.quick_answer("should I box?", self.state))
+
+
+class EndpointTests(unittest.TestCase):
+    def test_detects_over_at_the_end(self):
+        for text in (
+            "what's my fuel over",
+            "how are the tyres, over.",
+            "box this lap. Over and out!",
+            "over",
+        ):
+            self.assertTrue(endpoint.ends_with_over(text), text)
+
+    def test_ignores_over_inside_words(self):
+        for text in (
+            "the car is oversteering",
+            "what about the overcut",
+            "switch over to hards",
+            "which tyre is faster",
+            "",
+        ):
+            self.assertFalse(endpoint.ends_with_over(text), text)
+
+    def test_strips_trigger(self):
+        self.assertEqual(endpoint.strip_over("what's my fuel over"), "what's my fuel")
+        self.assertEqual(
+            endpoint.strip_over("How are the tyres, over and out."), "How are the tyres"
+        )
+        self.assertEqual(endpoint.strip_over("over"), "")
+
+    def test_custom_trigger_words(self):
+        words = ["roger"]
+        self.assertTrue(endpoint.ends_with_over("box this lap roger", words))
+        self.assertFalse(endpoint.ends_with_over("box this lap over", words))
+
+    def test_silence_tracker_needs_speech_first(self):
+        tracker = endpoint.SilenceTracker(sample_rate=16000, silence_s=0.5)
+        self.assertFalse(tracker.update(np.zeros(16000, dtype=np.float32)))
+
+    def test_silence_tracker_fires_after_speech(self):
+        tracker = endpoint.SilenceTracker(sample_rate=16000, silence_s=0.5)
+        speech = np.full(16000, 0.1, dtype=np.float32)
+        self.assertFalse(tracker.update(speech))
+        self.assertTrue(tracker.update(np.zeros(8000, dtype=np.float32)))
+
+    def test_short_noise_does_not_fire(self):
+        tracker = endpoint.SilenceTracker(sample_rate=16000, silence_s=0.5)
+        self.assertFalse(tracker.update(np.full(1600, 0.1, dtype=np.float32)))
+        self.assertFalse(tracker.update(np.zeros(16000, dtype=np.float32)))
 
 
 if __name__ == "__main__":

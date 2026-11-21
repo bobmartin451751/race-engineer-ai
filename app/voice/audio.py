@@ -124,6 +124,10 @@ class Recorder:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        return self.drain()
+
+    def drain(self) -> np.ndarray:
+        """Return everything captured since the last drain, without stopping."""
         chunks = []
         while True:
             try:

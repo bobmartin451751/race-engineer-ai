@@ -8,12 +8,17 @@ telemetry:
 audio:
   input_device: null    # null = Windows default mic; use --devices to find names/indices
   output_device: null   # null = Windows default output (your headset)
-  ptt_key: f9           # hold this to talk
+  ptt_key: f9           # tap this to talk (or hold, with ptt_mode: hold)
+  ptt_mode: tap         # tap = press once, say "over", auto-send | hold = push-to-talk
+  end_on_silence_s: 1.2 # send anyway after this much silence
+  over_check_interval_s: 0.8  # how often to listen for the word "over" while recording
+  over_words: ["over", "over and out"]
   record_max_seconds: 25
   sample_rate: 16000
 
 stt:
-  model: small.en       # tiny.en / base.en / small.en / medium.en
+  model: small.en       # final transcription
+  spotter_model: tiny.en  # fast model that listens for "over" while recording
   device: cpu           # "cuda" also works if cuBLAS + cuDNN 9 are installed
   compute_type: int8
   language: en

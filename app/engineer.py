@@ -8,6 +8,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
+import numpy as np
+
 from . import config as config_mod
 from .brain import prompts, tools
 from .brain.llm import LLMClient, LLMError, tidy_reply
@@ -15,7 +17,7 @@ from .proactive import ProactiveEngine
 from .telemetry import packets as p
 from .telemetry.listener import TelemetryListener
 from .telemetry.state import RaceState
-from .voice import audio
+from .voice import audio, endpoint
 from .voice.ptt import PushToTalk
 from .voice.stt import Transcriber
 from .voice.tts import PiperVoice
@@ -23,6 +25,21 @@ from .voice.tts import PiperVoice
 log = logging.getLogger(__name__)
 
 ACKS = ["Copy, checking.", "Stand by.", "Understood, one moment.", "Working on it."]
+
+
+def _trim_silence(
+    samples: np.ndarray, rate: int, threshold: float = 0.01, pad_s: float = 0.15
+) -> np.ndarray:
+    """Drop leading and trailing silence so Whisper has less audio to chew on."""
+    if samples.size == 0:
+        return samples
+    loud = np.where(np.abs(samples) > threshold)[0]
+    if loud.size == 0:
+        return samples
+    pad = int(pad_s * rate)
+    start = max(0, int(loud[0]) - pad)
+    end = min(samples.size, int(loud[-1]) + pad)
+    return samples[start:end]
 
 
 class RaceEngineer:
@@ -43,6 +60,10 @@ class RaceEngineer:
         )
         self.output_device = audio.resolve_device(cfg.get("audio.output_device"), "output")
         self.max_record_s = float(cfg.get("audio.record_max_seconds", 25))
+        self.ptt_mode = str(cfg.get("audio.ptt_mode", "tap"))
+        self.end_on_silence_s = float(cfg.get("audio.end_on_silence_s", 1.2))
+        self.over_check_interval_s = float(cfg.get("audio.over_check_interval_s", 0.8))
+        self.over_words = list(cfg.get("audio.over_words", ["over", "over and out"]))
 
         self.stt = Transcriber(
             model=cfg.get("stt.model", "small.en"),
@@ -50,6 +71,14 @@ class RaceEngineer:
             compute_type=cfg.get("stt.compute_type", "int8"),
             language=cfg.get("stt.language", "en"),
             beam_size=int(cfg.get("stt.beam_size", 1)),
+        )
+        # A tiny model is used while recording to spot the word "over" quickly.
+        self.spotter = Transcriber(
+            model=cfg.get("stt.spotter_model", "tiny.en"),
+            device=cfg.get("stt.device", "cpu"),
+            compute_type=cfg.get("stt.compute_type", "int8"),
+            language=cfg.get("stt.language", "en"),
+            beam_size=1,
         )
         self.voice = PiperVoice(
             piper_exe=cfg.resolve_path(cfg.get("tts.piper_exe")),
@@ -80,6 +109,9 @@ class RaceEngineer:
         self._speaking = threading.Event()
         self._running = threading.Event()
         self._ptt_timer: threading.Timer | None = None
+        self._utterance: list[np.ndarray] = []
+        self._silence: endpoint.SilenceTracker | None = None
+        self._partial_busy = threading.Event()
         self._threads: list[threading.Thread] = []
         self._last_connected: bool | None = None
 
@@ -113,6 +145,8 @@ class RaceEngineer:
                 key=str(self.cfg.get("audio.ptt_key", "f9")),
                 on_start=self.on_ptt_start,
                 on_stop=self.on_ptt_stop,
+                mode=self.ptt_mode,
+                is_active=lambda: self.recorder.recording,
             )
             self._ptt.start()
 
@@ -128,6 +162,7 @@ class RaceEngineer:
         try:
             started = time.time()
             self.stt.warm_up()
+            self.spotter.warm_up()
             log.info("speech recognition ready in %.1fs", time.time() - started)
         except Exception as exc:  # noqa: BLE001
             log.error("speech recognition failed to load: %s", exc)
@@ -144,7 +179,19 @@ class RaceEngineer:
             except Exception as exc:  # noqa: BLE001
                 log.error("cannot start recording: %s", exc)
                 return
-        print("  [listening...]", flush=True)
+            self._utterance = []
+            self._silence = endpoint.SilenceTracker(
+                sample_rate=self.recorder.sample_rate,
+                silence_s=self.end_on_silence_s,
+            )
+        if self.ptt_mode == "tap":
+            print('  [listening - say "over" when done]', flush=True)
+        else:
+            print("  [listening...]", flush=True)
+        self._partial_busy.clear()
+        threading.Thread(
+            target=self._monitor_utterance, name="endpoint", daemon=True
+        ).start()
         self._ptt_timer = threading.Timer(self.max_record_s, self.on_ptt_stop)
         self._ptt_timer.daemon = True
         self._ptt_timer.start()
@@ -154,22 +201,69 @@ class RaceEngineer:
             if self._ptt_timer is not None:
                 self._ptt_timer.cancel()
                 self._ptt_timer = None
-            if not self.recorder.recording:
+            if not self.recorder.recording and not self._utterance:
                 return
-            samples = self.recorder.stop()
-        duration = samples.size / float(self.recorder.sample_rate)
+            tail = self.recorder.stop()
+            if tail.size:
+                self._utterance.append(tail)
+            if self._utterance:
+                samples = np.concatenate(self._utterance)
+            else:
+                samples = np.zeros(0, dtype=np.float32)
+            self._utterance = []
+            self._silence = None
+        rate = self.recorder.sample_rate
+        duration = samples.size / float(rate) if rate else 0.0
         print(f"  [captured {duration:.1f}s]", flush=True)
         if duration < 0.3:
             print("  (too short, ignored)", flush=True)
             return
-        self._executor.submit(self._handle_audio, samples)
+        self._executor.submit(self._handle_audio, samples, rate)
 
-    def _handle_audio(self, samples) -> None:
+    def _monitor_utterance(self) -> None:
+        """Watch a recording for the word "over" or trailing silence."""
+        rate = self.recorder.sample_rate
+        last_check = time.time()
+        while self.recorder.recording and self._running.is_set():
+            time.sleep(0.1)
+            chunk = self.recorder.drain()
+            if chunk.size:
+                self._utterance.append(chunk)
+                if self._silence is not None and self._silence.update(chunk):
+                    log.info("endpoint: silence")
+                    print("  [silence - sending]", flush=True)
+                    self.on_ptt_stop()
+                    return
+            if self._partial_busy.is_set() or not self._utterance:
+                continue
+            if time.time() - last_check < self.over_check_interval_s:
+                continue
+            pending = np.concatenate(self._utterance)
+            if pending.size < int(1.2 * rate):
+                continue
+            last_check = time.time()
+            self._partial_busy.set()
+            try:
+                text = self.spotter.transcribe(pending[-int(2.5 * rate):], rate)
+                if endpoint.ends_with_over(text, self.over_words):
+                    log.info('endpoint: heard "over" (%s)', text)
+                    print('  ["over" heard]', flush=True)
+                    self.on_ptt_stop()
+                    return
+            except Exception as exc:  # noqa: BLE001
+                log.debug("partial transcription failed: %s", exc)
+            finally:
+                self._partial_busy.clear()
+
+    def _handle_audio(self, samples, sample_rate: int | None = None) -> None:
+        rate = sample_rate or self.recorder.sample_rate
+        samples = _trim_silence(samples, rate)
         try:
-            text = self.stt.transcribe(samples, self.recorder.sample_rate)
+            text = self.stt.transcribe(samples, rate)
         except Exception as exc:  # noqa: BLE001
             log.error("transcription failed: %s", exc)
             return
+        text = endpoint.strip_over(text, self.over_words).strip(" ,.;:-")
         if not text:
             print("  (nothing recognised)", flush=True)
             return
@@ -312,7 +406,12 @@ class RaceEngineer:
         self.start()
         print()
         print("Race engineer online.")
-        print("  hold %s and speak" % str(self.cfg.get("audio.ptt_key", "f9")).upper())
+        key = str(self.cfg.get("audio.ptt_key", "f9")).upper()
+        if self.ptt_mode == "tap":
+            print(f'  tap {key}, speak, then say "over" to send')
+            print("  (a pause also sends; tap again to send early)")
+        else:
+            print(f"  hold {key} and speak")
         print("  type a question and press Enter to ask by text")
         print("  'status' for a snapshot, 'q' to quit")
         print()

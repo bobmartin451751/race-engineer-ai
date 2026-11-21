@@ -3,7 +3,7 @@
 A voice race engineer for **EA SPORTS F1 24** on PC. Hold a key, ask a question,
 and an engineer answers over team radio with your real telemetry in front of it.
 
-- **Hears you** — push-to-talk (F9 by default) + Whisper speech recognition, offline
+- **Hears you** — tap-to-talk (F9 by default) + Whisper speech recognition, offline
 - **Knows the race** — reads F1 24 UDP telemetry: fuel, tyres, gaps, flags, weather, pit window
 - **Thinks** — local Qwen2.5-7B for instant replies, DeepSeek for real strategy questions
 - **Talks** — Piper voice through a radio filter, straight into your headset
@@ -48,8 +48,10 @@ setx DEEPSEEK_API_KEY "sk-your-key"
 .\run.cmd
 ```
 
-Then hold **F9**, speak, release. Typing a question and pressing Enter does the
-same thing without the mic.
+Then **tap F9**, speak, and say **"over"** — it stops and answers. A pause also
+sends, and typing a question and pressing Enter works without the mic.
+
+Set `audio.ptt_mode: hold` in `config.yaml` if you prefer push-to-talk.
 
 ## Commands
 
@@ -95,7 +97,7 @@ reports it instead of dropping it silently.
 ```
 F1 24 ──UDP 20777──► telemetry parser ──► live race state
                                               │
-F9 (hold) ──► mic ──► Whisper ──► question ───┤
+F9 (tap) ──► mic ──► Whisper ──► question ───┤
                                               ▼
                                    engineer brain
                           local Qwen 7B  ◄──►  DeepSeek
@@ -135,6 +137,11 @@ headroom, `.\start-llm.cmd 32`. `--ngl 0` runs the model on CPU.
 `alt`, `shift`, `insert`, `delete`, `home`, `end`, `pause`, letters and digits.
 Map a wheel button to that key in your wheel software.
 
+**Talking.** `audio.ptt_mode: tap` (default) records from one key press until you
+say "over", pause for `end_on_silence_s`, or tap again. Set `hold` for classic
+push-to-talk. `audio.over_words` changes the trigger words. If "over" is missed,
+the silence fallback still sends the question.
+
 **Audio routing.** Set `audio.input_device` / `audio.output_device` to a name
 substring or index from `--devices`. Route the engineer to the headset and keep
 game audio where you want it.
@@ -153,6 +160,7 @@ not compete with the game for VRAM.
 | Everything is offline / no reply | Start `.\start-llm.cmd`; check `.\run.cmd --check` |
 | Smart answers never happen | `DEEPSEEK_API_KEY` is missing or set after the terminal opened |
 | Mic never records | Windows Settings > Privacy > Microphone; check the default input in `--devices` |
+| Doesn't stop on "over" | Say it clearly at the end of the sentence; if it still misses, the 1.2 s silence fallback sends anyway. Try `stt.spotter_model: base.en` |
 | No voice output | `.\run.cmd --test-tts`; confirm `models/piper/piper.exe` and the `.onnx` exist |
 | Whisper CUDA errors | Keep `stt.device: cpu` (default). CUDA needs cuBLAS and cuDNN 9 on PATH |
 | Game stutters with the model running | `.\start-llm.cmd 16` or lower |

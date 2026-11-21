@@ -1,4 +1,4 @@
-"""Push-to-talk key handling."""
+"""Push-to-talk key handling: hold-to-talk or tap-to-talk."""
 
 from __future__ import annotations
 
@@ -36,43 +36,60 @@ def _parse_key(name: str):
 
 
 class PushToTalk:
-    """Fires callbacks when the configured key is pressed and released."""
+    """Drives start/stop callbacks from a single key.
+
+    mode="hold": press starts, release stops.
+    mode="tap":  press toggles. Whether a press means start or stop is decided
+                 by ``is_active``, so auto-stop (the word "over") stays in sync.
+    """
 
     def __init__(
         self,
         key: str,
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
+        mode: str = "tap",
+        is_active: Callable[[], bool] | None = None,
     ) -> None:
         self.key = _parse_key(key)
         self.on_start = on_start
         self.on_stop = on_stop
+        self.mode = mode if mode in ("tap", "hold") else "tap"
+        self.is_active = is_active or (lambda: False)
         self._listener = None
-        self._held = threading.Event()
+        self._pressed = threading.Event()
 
     def start(self) -> None:
         from pynput import keyboard
 
         def on_press(key):  # noqa: ANN001
-            if key == self.key and not self._held.is_set():
-                self._held.set()
-                try:
+            if key != self.key or self._pressed.is_set():
+                return
+            self._pressed.set()
+            try:
+                if self.mode == "hold":
                     self.on_start()
-                except Exception:  # noqa: BLE001
-                    log.exception("push-to-talk start handler failed")
+                elif self.is_active():
+                    self.on_stop()
+                else:
+                    self.on_start()
+            except Exception:  # noqa: BLE001
+                log.exception("push-to-talk key press handler failed")
 
         def on_release(key):  # noqa: ANN001
-            if key == self.key and self._held.is_set():
-                self._held.clear()
+            if key != self.key:
+                return
+            self._pressed.clear()
+            if self.mode == "hold":
                 try:
                     self.on_stop()
                 except Exception:  # noqa: BLE001
-                    log.exception("push-to-talk stop handler failed")
+                    log.exception("push-to-talk key release handler failed")
 
         self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self._listener.daemon = True
         self._listener.start()
-        log.info("push-to-talk ready")
+        log.info("push-to-talk ready (%s mode, %s)", self.mode, self.key)
 
     def stop(self) -> None:
         if self._listener is not None:
