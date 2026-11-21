@@ -100,6 +100,20 @@ def _check(cfg: config_mod.Config) -> int:
         ok = False
         print(f"  [FAIL] piper: exe={piper.exists()} voice={voice.exists()} (run setup.ps1)")
 
+    llm_dir = config_mod.PROJECT_ROOT / "models" / "llm"
+    parts = sorted(llm_dir.glob("qwen2.5-7b-instruct-q4_k_m*.gguf"))
+    if parts:
+        total_gb = sum(p.stat().st_size for p in parts) / (1024 ** 3)
+        print(f"  [ok]   local model: {len(parts)} file(s), {total_gb:.1f} GB")
+    else:
+        print("  [warn] no local model in models/llm (run: setup.ps1 -Models)")
+
+    server = config_mod.PROJECT_ROOT / "models" / "llama" / "llama-server.exe"
+    if server.exists():
+        print("  [ok]   llama-server.exe present")
+    else:
+        print("  [warn] llama-server.exe missing (run: setup.ps1 -Models)")
+
     from .brain.llm import LLMClient
 
     local = LLMClient("local", cfg.provider("local"))

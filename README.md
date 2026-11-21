@@ -22,7 +22,8 @@ and an engineer answers over team radio with your real telemetry in front of it.
 ```powershell
 # 1. Install Python deps, Piper voice, and (with -Models) llama.cpp + the 7B model
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
-powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Models   # ~5 GB download
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Models   # ~5.7 GB download
+#    -SkipModel = llama.cpp only, -SkipLlama = model only
 
 # 2. DeepSeek key for smart answers
 setx DEEPSEEK_API_KEY "sk-your-key"
@@ -116,6 +117,8 @@ not compete with the game for VRAM.
 
 | Symptom | Fix |
 |---|---|
+| "No Windows llama.cpp build found" | Fixed in the current `setup.ps1`: it scans llama.cpp's prerelease build tags, because the `latest` tag (`v1.0.0`) ships no binaries. If GitHub rate-limits the API, rerun later or use the Vulkan build manually |
+| Model download 404 | The Qwen GGUF is published as two split files (`…-00001-of-00002.gguf`). Download both halves; llama.cpp joins them automatically and `start-llm.cmd` picks the first |
 | "I have no telemetry" | `.\run.cmd --telemetry` while driving. Check UDP format is **2024**, IP `127.0.0.1`, port `20777`, and that Windows Firewall allows F1 24 |
 | Everything is offline / no reply | Start `.\start-llm.cmd`; check `.\run.cmd --check` |
 | Smart answers never happen | `DEEPSEEK_API_KEY` is missing or set after the terminal opened |
