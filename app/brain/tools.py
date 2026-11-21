@@ -187,23 +187,59 @@ def execute_tool(name: str, raw_args: str | dict, state: RaceState) -> str:
 
 
 def quick_answer(text: str, state: RaceState) -> str | None:
-    """Deterministic answer used when the model is too slow or unavailable."""
+    """Deterministic spoken answer used for factual questions and as a fallback."""
     lowered = text.lower()
     if any(word in lowered for word in ("fuel", "lift and coast", "save")):
-        return fuel_status(state)
+        surplus = state.fuel_surplus_laps()
+        base = f"{state.fuel_kg:.1f} kilograms of fuel"
+        if surplus is None:
+            return base + "."
+        if surplus >= 0.3:
+            return f"{base}, about {surplus:.1f} laps in hand. Plenty to the end."
+        if surplus > -0.3:
+            return f"{base}, right on the limit for the finish."
+        return f"{base}, {abs(surplus):.1f} laps short. Lift and coast."
     if any(word in lowered for word in ("tyre", "tire", "grip", "wear", "compound")):
-        return tyre_status(state)
+        wear = max(state.tyre_wear) if state.tyre_wear else 0.0
+        life = state.predicted_tyre_life()
+        text_out = (
+            f"{state.compound_name.capitalize()}s, {state.tyre_age_laps} laps old, "
+            f"{wear:.0f} percent wear"
+        )
+        if life is not None:
+            text_out += f", about {life:.0f} laps of life left"
+        return text_out + "."
     if any(word in lowered for word in ("gap", "ahead", "behind", "traffic", "drs")):
-        return race_status(state)
+        if "behind" in lowered:
+            if state.gap_behind_s is None:
+                return "Nothing close behind."
+            return f"{state.gap_behind_s:.1f} seconds to the car behind."
+        if state.gap_ahead_s is None:
+            return "No car directly ahead."
+        return f"{state.gap_ahead_s:.1f} seconds to the car ahead."
     if any(word in lowered for word in ("pit", "box", "stop", "window")):
-        if state.pit_window_ideal:
+        if not state.pit_window_ideal:
+            return "The game has not published a pit window for this session."
+        ideal, latest, lap = state.pit_window_ideal, state.pit_window_latest, state.lap
+        if lap < ideal:
             return (
-                f"Pit window is lap {state.pit_window_ideal} to {state.pit_window_latest}. "
-                f"You are on lap {state.lap}."
+                f"Pit window is lap {ideal} to {latest}, opens in {ideal - lap} laps. "
+                "Stay out."
             )
-        return "The game has not published a pit window for this session."
+        if lap <= latest:
+            return "Pit window is open. Box this lap."
+        return f"Pit window closed on lap {latest}."
     if any(word in lowered for word in ("lap time", "last lap", "pace")):
-        return lap_history(state)
+        if state.last_lap_ms:
+            minutes, seconds = divmod(state.last_lap_ms / 1000.0, 60)
+            lap_text = (
+                f"{int(minutes)} minute {seconds:04.1f}" if minutes else f"{seconds:.1f}"
+            )
+            return f"Last lap {lap_text}."
+        return "No completed lap yet."
     if any(word in lowered for word in ("position", "where am i", "status")):
-        return race_status(state)
+        return (
+            f"Lap {state.lap} of {state.total_laps}, position {state.position}, "
+            f"{state.compound_name} tyres {state.tyre_age_laps} laps old."
+        )
     return None

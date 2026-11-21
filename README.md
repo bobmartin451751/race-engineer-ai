@@ -84,10 +84,14 @@ F9 (hold) ──► mic ──► Whisper ──► question ───┤
   SimHub and MoTeC.
 - **Tools** (`app/brain/tools.py`) answer fuel/tyre/gap questions from real
   numbers, so the model never invents a figure.
-- **Routing**: short factual questions go to the local 7B model; questions with
-  "why / should / strategy / undercut..." or 12+ words go to DeepSeek. If the
-  local model stalls past `first_token_deadline_s`, the engineer speaks a
+- **Routing**: factual questions (fuel, tyres, gaps, pit window, position, last
+  lap) are answered directly from telemetry in under 0.1 s — no model, so the
+  numbers cannot be wrong. Questions with "why / should / strategy / undercut…"
+  or 12+ words go to DeepSeek, or to the local 7B model when no key is set. If
+  the local model stalls past `first_token_deadline_s`, the engineer speaks a
   deterministic telemetry answer instead of leaving you in silence.
+- **Speed**: measured on the reference machine — 0.0 s for factual answers,
+  1–2 s for local model replies (compact telemetry brief, not the full JSON).
 - **Proactive rules** (`app/proactive.py`) run independently of questions and
   respect a cooldown so they never talk over you.
 

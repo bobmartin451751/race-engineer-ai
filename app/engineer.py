@@ -194,8 +194,15 @@ class RaceEngineer:
                 "port two zero seven seven seven, format twenty twenty four."
             )
 
+        # Factual telemetry questions are answered directly from the data:
+        # instant, and the numbers can never be hallucinated.
+        if not self._is_complex(question):
+            direct = tools.quick_answer(question, self.state)
+            if direct:
+                return direct
+
         client, escalate = self._pick_client(question)
-        messages = prompts.build_messages(self.state, question)
+        messages = prompts.build_messages(self.state, question, compact=not escalate)
         runner = lambda name, args: tools.execute_tool(name, args, self.state)  # noqa: E731
 
         if escalate and self.smart is not None:
@@ -227,13 +234,7 @@ class RaceEngineer:
         return "I can't reach the model and that one isn't in my telemetry. Ask again in a moment."
 
     def _pick_client(self, question: str) -> tuple[LLMClient | None, bool]:
-        lowered = question.lower()
-        words = len(question.split())
-        keywords = [str(k).lower() for k in self.cfg.get("brain.escalate_when", [])]
-        complex_question = (
-            words >= int(self.cfg.get("brain.escalate_min_words", 12))
-            or any(k in lowered for k in keywords)
-        )
+        complex_question = self._is_complex(question)
         if complex_question and self.smart is not None:
             return self.smart, True
         if self.local.health()[0]:
@@ -241,6 +242,15 @@ class RaceEngineer:
         if self.smart is not None:
             return self.smart, True
         return None, False
+
+    def _is_complex(self, question: str) -> bool:
+        lowered = question.lower()
+        words = len(question.split())
+        keywords = [str(k).lower() for k in self.cfg.get("brain.escalate_when", [])]
+        return (
+            words >= int(self.cfg.get("brain.escalate_min_words", 12))
+            or any(k in lowered for k in keywords)
+        )
 
     @staticmethod
     def _ensure_answer(text: str, question: str) -> str:
@@ -296,6 +306,9 @@ class RaceEngineer:
 
     # ------------------------------------------------------------------
     def run(self, initial_question: str | None = None) -> None:
+        if initial_question:
+            # One-shot mode: no unsolicited radio calls.
+            self.proactive.enabled = False
         self.start()
         print()
         print("Race engineer online.")

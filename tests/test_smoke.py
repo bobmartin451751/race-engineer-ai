@@ -75,9 +75,10 @@ class StateTests(unittest.TestCase):
         self.assertIsNotNone(self.state.fuel_surplus_laps())
 
     def test_quick_answers_use_telemetry(self):
-        self.assertIn("Fuel in tank", tools.quick_answer("how's my fuel?", self.state))
-        self.assertIn("tyres", tools.quick_answer("how are my tyres?", self.state).lower())
+        self.assertIn("kilograms of fuel", tools.quick_answer("how's my fuel?", self.state))
+        self.assertIn("mediums", tools.quick_answer("how are my tyres?", self.state).lower())
         self.assertIn("Lap", tools.quick_answer("where am I?", self.state))
+        self.assertIn("Pit window", tools.quick_answer("should I box?", self.state))
 
 
 if __name__ == "__main__":

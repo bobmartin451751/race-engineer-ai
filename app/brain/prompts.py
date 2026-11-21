@@ -11,6 +11,8 @@ How you speak:
 - Like real team radio: calm, direct, confident. One or two short sentences, 30 words maximum.
 - Plain spoken English only. No markdown, no bullets, no emojis, no stage directions.
 - Always give the number the driver needs, then the instruction.
+- The ENGINEER NOTES block is computed from live telemetry. Prefer it over your own assumptions.
+- Answer the specific question. Add at most one other fact, and only if it changes what the driver must do.
 - Say numbers the way a human says them: "one point two seconds", "three laps", "box this lap".
 - Never invent telemetry. Use the live data block and the tools. If something is unknown, say it is unknown.
 - Never mention being an AI, a model, or a prompt.
@@ -18,7 +20,7 @@ How you speak:
 - If the driver is in a dangerous moment (crash, red flag, heavy rain), lead with the safety instruction."""
 
 
-def build_context(state: Any, extra: str | None = None) -> str:
+def build_context(state: Any, extra: str | None = None, compact: bool = False) -> str:
     snapshot = state.snapshot()
     header = (
         f"Driver: {snapshot.get('driver_name')}. "
@@ -26,15 +28,124 @@ def build_context(state: Any, extra: str | None = None) -> str:
         f"Lap {snapshot['lap']} of {snapshot['total_laps'] or 'unknown'}, "
         f"position {snapshot['position']}."
     )
-    body = json.dumps(snapshot, separators=(",", ":"), default=str)
-    context = f"{header}\n\nLIVE TELEMETRY (authoritative):\n{body}"
+    notes = _engineer_notes(snapshot)
+    if compact:
+        body = _compact_block(snapshot)
+    else:
+        body = "LIVE TELEMETRY (authoritative):\n" + json.dumps(
+            snapshot, separators=(",", ":"), default=str
+        )
+    context = f"{header}\n\n{body}"
+    if notes:
+        context += "\n\nENGINEER NOTES (derived from the same data, trust these):\n" + "\n".join(
+            f"- {note}" for note in notes
+        )
     if extra:
         context += f"\n\nADDITIONAL CONTEXT:\n{extra}"
     return context
 
 
-def build_messages(state: Any, question: str, extra: str | None = None) -> list[dict[str, str]]:
+def _compact_block(snapshot: dict[str, Any]) -> str:
+    """Short telemetry brief for small local models (fewer prompt tokens)."""
+    tyre = snapshot.get("tyre", {})
+    wear = tyre.get("wear_pct", {})
+    lines = [
+        "TELEMETRY:",
+        f"fuel {snapshot.get('fuel_kg')} kg, {snapshot.get('fuel_per_lap_kg')} kg/lap, "
+        f"{snapshot.get('laps_remaining')} laps to go, "
+        f"surplus {snapshot.get('fuel_surplus_laps')} laps",
+        f"tyres {tyre.get('compound')}, {tyre.get('age_laps')} laps old, "
+        f"wear {max(wear.values()):.0f}%" if wear else "tyres unknown",
+        f"tyre life about {tyre.get('predicted_life_laps')} laps",
+        f"gaps ahead {snapshot.get('gap_ahead_s')} s, behind {snapshot.get('gap_behind_s')} s",
+        f"pit window lap {snapshot.get('pit_window_ideal_lap')} to "
+        f"{snapshot.get('pit_window_latest_lap')}",
+        f"flag {snapshot.get('flag')}, safety car {snapshot.get('safety_car')}, "
+        f"weather {snapshot.get('weather')}",
+        f"track temp {snapshot.get('track_temp_c')} C, air {snapshot.get('air_temp_c')} C",
+        f"penalties {snapshot.get('penalties_s')} s, pit stops {snapshot.get('pit_stops')}",
+    ]
+    recent = snapshot.get("recent_laps") or []
+    if recent:
+        lines.append(
+            "recent laps: "
+            + ", ".join(f"{r['time_s']:.1f}s on {r['tyre']}" for r in recent[-3:])
+        )
+    return "\n".join(lines)
+
+
+def _engineer_notes(snapshot: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    remaining = snapshot.get("laps_remaining")
+
+    surplus = snapshot.get("fuel_surplus_laps")
+    if snapshot.get("fuel_kg") is not None:
+        fuel = f"Fuel: {snapshot['fuel_kg']:.1f} kilograms in the tank"
+        per_lap = snapshot.get("fuel_per_lap_kg")
+        if per_lap:
+            fuel += f", using {per_lap:.2f} kilograms per lap"
+        if remaining:
+            fuel += f", {remaining} laps remaining"
+        to_end = snapshot.get("fuel_to_end_kg")
+        if to_end is not None:
+            fuel += f", {to_end:.1f} kilograms needed to finish"
+        notes.append(fuel + ".")
+    if surplus is not None:
+        if surplus >= 0:
+            notes.append(f"Fuel: {surplus:.1f} laps of fuel in hand.")
+        else:
+            notes.append(
+                f"Fuel: {abs(surplus):.1f} laps SHORT, driver must save fuel now."
+            )
+
+    tyre = snapshot.get("tyre", {})
+    life = tyre.get("predicted_life_laps")
+    age = tyre.get("age_laps")
+    if life is not None and remaining is not None:
+        if life + 1 < remaining:
+            notes.append(
+                f"Tyres: about {life:.0f} laps of life left but {remaining} laps to go, "
+                "so another stop is likely needed."
+            )
+        else:
+            notes.append(f"Tyres: about {life:.0f} laps of life left, enough to finish.")
+    elif age is not None:
+        notes.append(f"Tyres: {age} laps old on {tyre.get('compound')}.")
+    if life is not None and remaining is not None and life + 1 < remaining:
+        notes.append("Recommendation: plan for a second stop, the current tyres will not last.")
+
+    ideal = snapshot.get("pit_window_ideal_lap") or 0
+    latest = snapshot.get("pit_window_latest_lap") or 0
+    lap = snapshot.get("lap") or 0
+    if ideal and lap:
+        if lap < ideal:
+            notes.append(f"Pit window opens on lap {ideal}, {ideal - lap} laps away.")
+            notes.append(
+                f"Recommendation: stay out and pit on lap {ideal}; do not box before then."
+            )
+        elif lap <= latest:
+            notes.append(f"Pit window is OPEN now (lap {ideal} to {latest}).")
+            notes.append("Recommendation: box this lap.")
+        else:
+            notes.append(f"Pit window has closed (was lap {ideal} to {latest}).")
+
+    if snapshot.get("safety_car") not in (None, "none"):
+        notes.append(f"Safety car state: {snapshot['safety_car']}.")
+    if snapshot.get("flag") in ("yellow", "red", "blue"):
+        notes.append(f"Flag: {snapshot['flag']}.")
+    forecast = snapshot.get("rain_forecast") or []
+    if forecast and snapshot.get("weather") in ("clear", "light cloud", "overcast"):
+        notes.append("Weather: " + "; ".join(forecast[:2]) + ".")
+    return notes
+
+
+def build_messages(
+    state: Any, question: str, extra: str | None = None, compact: bool = False
+) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"{build_context(state, extra)}\n\nDRIVER SAID: {question}"},
+        {
+            "role": "user",
+            "content": f"{build_context(state, extra, compact=compact)}\n\nDRIVER SAID: {question}",
+        },
     ]
